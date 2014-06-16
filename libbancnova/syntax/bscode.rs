@@ -1,6 +1,9 @@
-use std::io::{BufferedReader, BufferedWriter, BufReader};
+use std::io::{BufferedReader, BufferedWriter};
+#[cfg(test)]
+use std::io::{File, BufReader};
 use std::fmt::{Show, Formatter, FormatError, WriteError};
 use std::container::Container;
+use std::string::String;
 use result::BancResult;
 
 #[deriving(PartialEq,Eq)]
@@ -104,9 +107,11 @@ impl SyntaxTree {
             match oline {
                 Err(_) => { return Err("read error"); },
                 Ok(line) => {
-                    match SyntaxInstruction::parse(line) {
-                        Err(s) => { return Err(s); },
-                        Ok(inst) => { tree.push(inst); },
+                    if line.as_slice()!="\x1a" {
+                        match SyntaxInstruction::parse(line) {
+                            Err(s) => { return Err(s); },
+                            Ok(inst) => { tree.push(inst); },
+                        }
                     }
                 },
             }
@@ -146,8 +151,7 @@ fn syntax_tree() {
     tree.push(SyntaxInstruction::new(1, 2, 3, 4));
     tree.push(SyntaxInstruction::new(2, 3, 0, 0));
     let actual = tree.to_str();
-    println!("actual:[{}]", actual);
-    assert!(actual == "1,2,3,4\n2,3,,\n".to_string());
+    assert_eq!(actual, "1,2,3,4\n2,3,,\n".to_string());
 }
 
 #[test]
@@ -156,10 +160,25 @@ fn parse_tree() {
     let reader: BufReader = BufReader::new(strform.as_bytes());
     let mut breader: BufferedReader<BufReader> = BufferedReader::new(reader);
     let tree = SyntaxTree::parse(&mut breader).unwrap();
-    assert!(tree.len() == 2);
-    assert!(*tree.get(0) == SyntaxInstruction::new(5, 6, 7, 8));
-    assert!(*tree.get(1) == SyntaxInstruction::new(0, 0, 0, 0));
+    assert_eq!(tree.len(), 2);
+    assert_eq!(tree.get(0), &SyntaxInstruction::new(5, 6, 7, 8));
+    assert_eq!(tree.get(1), &SyntaxInstruction::new(0, 0, 0, 0));
     let actual = tree.to_str();
-    println!("actual:[{}]", actual);
-    assert!(actual == "5,6,7,8\n,,,\n".to_string());
+    assert_eq!(actual, "5,6,7,8\n,,,\n".to_string());
+}
+
+#[test]
+fn parse_file() {
+    let file = File::open(&Path::new("../test_data/MM1SM1.SCN"));
+    let mut reader = BufferedReader::new(file);
+    let tree = SyntaxTree::parse(&mut reader).unwrap();
+    assert_eq!(tree.len(), 706);
+    assert_eq!(tree.get(  0), &SyntaxInstruction::new(31521,10001,700,108));
+    assert_eq!(tree.get(100), &SyntaxInstruction::new(3100,1528,1,10011));
+    assert_eq!(tree.get(200), &SyntaxInstruction::new(11530,22012,22002,22002));
+    assert_eq!(tree.get(300), &SyntaxInstruction::new(3100,285,3,30088));
+    assert_eq!(tree.get(400), &SyntaxInstruction::new(3000,1533,6,10000));
+    assert_eq!(tree.get(500), &SyntaxInstruction::new(3000,1538,6,30045));
+    assert_eq!(tree.get(600), &SyntaxInstruction::new(3000,1540,3,30032));
+    assert_eq!(tree.get(700), &SyntaxInstruction::new(8500,0,3,0));
 }
