@@ -1,0 +1,5 @@
+*~
+*.o
+bin/bancnova
+bin/bancnova-*
+bin/*-test
