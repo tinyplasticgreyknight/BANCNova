@@ -127,11 +127,49 @@ impl BinaryComparator {
     }
 }
 
+impl ArithTerm {
+    fn from_bscode(n: Value) -> Option<ArithTerm> {
+        let val = n.as_i16();
+        let aoper = ArithOperator::from_bscode(val % 10);
+        if aoper.is_none() { return None; }
+        let aoper = aoper.unwrap();
+        let val = val - (val%10);
+        match val {
+            0..20000 => {
+                Some(ArithCell(aoper, CellAddress::new(val/10)))
+            },
+            20001..21999 => None,
+            _ => {
+                let val = (val-22000)/10;
+                Some(ArithImmediate(aoper, (val as int).as_value()))
+            },
+        }
+    }
+}
+
 impl ToValue for ArithTerm {
     fn as_value(&self) -> Value {
         match self {
             &ArithCell(op, addr) => ((addr*10) + op).as_value(),
             &ArithImmediate(op, val) => (val*10) + 22000 + op,
+        }
+    }
+}
+
+impl ArithOperator {
+    pub fn from_bscode(val: i16) -> Option<ArithOperator> {
+        match val {
+            0 => Some(Length),
+            1 => Some(Subtract),
+            2 => Some(Add),
+            3 => Some(Multiply),
+            4 => Some(Divide),
+            5 => Some(Substring),
+            6 => Some(System),
+            7 => Some(Logarithm),
+            8 => Some(TruncateInt),
+            9 => Some(Date),
+            _ => None
         }
     }
 }
@@ -183,22 +221,40 @@ fn conditional_as_bscode(inst: &Instruction) -> Option<bscode::Instruction> {
     }
 }
 
+fn arithmetic_from_bscode(opcode: Value, a: Value, b: Value, c: Value) -> Option<Instruction> {
+    let iopcode = opcode.as_i16();
+    if iopcode <= 10000 || iopcode >= 12000 {
+        return None;
+    }
+    let addr = CellAddress::new((opcode + (-10000)).as_i16());
+    let oa = ArithTerm::from_bscode(a);
+    let ob = ArithTerm::from_bscode(b);
+    let oc = ArithTerm::from_bscode(c);
+    match (oa, ob, oc) {
+        (Some(a), Some(b), Some(c)) => Some(Arithmetic(addr, a, b, c)),
+        _ => None,
+    }
+}
+
 impl Instruction {
     pub fn from_bscode(inst: &bscode::Instruction) -> Instruction {
         let opcode = inst.get(0).as_i16() as int;
         let (a, b, c) = (*inst.get(1), *inst.get(2), *inst.get(3));
+        let all_args_zero = a.is_zero() && b.is_zero() && c.is_zero();
         match opcode {
-            2999 => NewPage,
-            3001|3101 => {
+            2999 if all_args_zero => NewPage,
+            3000|3001|3101 => {
                 let ocomp = Comparison::from_bscode(a, b, c);
-                if a.is_zero() && b.is_zero() && c.is_zero() {
+                if all_args_zero && opcode != 3000 {
                     if opcode == 3001 {
                         BlockEnd
                     } else {
                         ReverseBlockEnd
                     }
                 } else if ocomp.is_some() {
-                    if opcode == 3001 {
+                    if opcode == 3000 {
+                        SimpleConditional(ocomp.unwrap())
+                    } else if opcode == 3001 {
                         BlockConditional(ocomp.unwrap())
                     } else {
                         ReverseBlockConditional(ocomp.unwrap())
@@ -206,6 +262,13 @@ impl Instruction {
                 } else {
                     Unrecognised(opcode.as_value(), a, b, c)
                 }
+            },
+            8400 if all_args_zero => SaveAddress,
+            8500 if a.is_zero() && c.is_zero() => GotoPage(b),
+            9001 if all_args_zero => AutoSave,
+            10000..11999 => match arithmetic_from_bscode(opcode.as_value(), a, b, c) {
+                Some(a) => a,
+                None => Unrecognised(opcode.as_value(), a, b, c),
             },
             _ => Unrecognised(opcode.as_value(), a, b, c),
         }
