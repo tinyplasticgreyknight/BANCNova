@@ -11,7 +11,7 @@ pub struct Value {
     x: i16,
 }
 
-#[deriving(PartialEq,Eq)]
+#[deriving(PartialEq,Eq,Show)]
 pub struct CellAddress {
     a: i16,
 }
@@ -67,6 +67,14 @@ impl Value {
     pub fn new<T: ToPrimitive>(x: T) -> Value {
         Value { x: x.to_i16().unwrap_or(0) }
     }
+
+    pub fn is_zero(&self) -> bool {
+        self.x == 0
+    }
+
+    pub fn as_i16(&self) -> i16 {
+        self.x
+    }
 }
 
 impl Show for Value {
@@ -106,6 +114,10 @@ impl Instruction {
         } else {
             Err("not enough fields")
         }
+    }
+
+    pub fn get<'a>(&'a self, index: uint) -> &'a Value {
+        self.values.get(index).unwrap()
     }
 
     pub fn render<W: Writer>(&self, buffer: &mut BufferedWriter<W>) {
