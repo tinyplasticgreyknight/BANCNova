@@ -1,5 +1,9 @@
+use std::io::{BufferedReader};
+#[cfg(test)]
+use std::io::{BufReader};
 use syntax::bscode;
 use syntax::bscode::{Value, CellAddress, ToValue};
+use result::BancResult;
 
 #[deriving(PartialEq,Eq,Show)]
 pub enum Expression {
@@ -71,6 +75,17 @@ impl ToValue for Expression {
     }
 }
 
+fn parse_value<R: Reader>(buffer: &mut BufferedReader<R>) -> BancResult<Value> {
+    Value::parse(buffer)
+}
+
+fn parse_chardata_1<R: Reader>(buffer: &mut BufferedReader<R>) -> BancResult<char> {
+    match buffer.read_char() {
+        Ok(c) => Ok(c),
+        Err(e) => Err(e.desc),
+    }
+}
+
 impl Expression {
     pub fn from_bscode(expr: Value) -> Option<Expression> {
         match expr.as_i16() {
@@ -79,6 +94,29 @@ impl Expression {
             30000..30255 => Some(ImmChar((expr + (-30000)).as_i16() as u8 as char)),
             1..2000 => Some(Cell(CellAddress::new(expr.as_i16()))),
             _ => None,
+        }
+    }
+
+    pub fn parse<R: Reader>(buffer: &mut BufferedReader<R>) -> BancResult<Expression> {
+        match buffer.read_char() {
+            Err(x) => Err(x.desc),
+            Ok(x) => match x {
+                '\'' => {
+                    let ret = parse_chardata_1(buffer).map(|v| {ImmChar(v)});
+                    match buffer.read_char() {
+                        Ok('\'') => ret,
+                        _ => Err("unclosed character"),
+                    }
+                },
+                '-' => {
+                    parse_value(buffer).map(|v| {Immediate(v)})
+                },
+                '0'..'9' => {
+                    parse_value(buffer).map(|v| {Immediate(v)})
+                },
+                '@' => Ok(Nothing),
+                _ => Err("read error"),
+            },
         }
     }
 }
@@ -361,4 +399,13 @@ fn render_arith_substr() {
     let inst = Arithmetic(CellAddress::new(350), ArithImmediate(Add, 42.as_value()), ArithCell(Multiply, CellAddress::new(269)), ArithImmediate(Logarithm, 53.as_value()));
     let bscode = inst.as_bscode();
     assert_eq!(bscode, bscode::Instruction::new(10350,22422,2693,22537));
+}
+
+#[test]
+fn parse_expr_imm_char() {
+    let strform = "'@'";
+    let reader = BufReader::new(strform.as_bytes());
+    let mut breader = BufferedReader::new(reader);
+    let expr = Expression::parse(&mut breader).unwrap();
+    assert_eq!(expr, ImmChar('@'));
 }

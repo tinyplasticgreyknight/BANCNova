@@ -68,6 +68,10 @@ impl Value {
         Value { x: x.to_i16().unwrap_or(0) }
     }
 
+    pub fn parse<R: Reader>(buffer: &mut BufferedReader<R>) -> BancResult<Value> {
+        Err("not implemented")
+    }
+
     pub fn is_zero(&self) -> bool {
         self.x == 0
     }
