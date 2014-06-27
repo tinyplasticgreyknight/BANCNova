@@ -100,6 +100,14 @@ impl Expression {
                     Err("character literal too long")
                 }
             },
+            tokenize::AddressSign => {
+                match tokenizer.next() {
+                    Some(tokenize::IntegerLiteral(a)) => {
+                        CellAddress::parse(a).map(|a| { Cell(a) })
+                    },
+                    _ => Err("expected integer after address-sign")
+                }
+            },
             tokenize::IntegerLiteral(s) => {
                 Value::parse(s).map(|v| { Immediate(v) })
             },
@@ -414,4 +422,23 @@ fn parse_expr_imm_int3() {
     let strform = "1234b";
     let expr = Expression::parse_string(strform).unwrap();
     assert_eq!(expr, Immediate(Value::new(1234)));
+}
+
+#[test]
+fn parse_expr_cell_addr() {
+    let strform = "@1234";
+    let expr = Expression::parse_string(strform).unwrap();
+    assert_eq!(expr, Cell(CellAddress::new(1234)));
+}
+
+#[test]
+fn parse_expr_cell_bad_addr() {
+    let strform = "@'_'";
+    assert!(Expression::parse_string(strform).is_err());
+}
+
+#[test]
+fn parse_expr_cell_bad_addr2() {
+    let strform = "@2001";
+    assert!(Expression::parse_string(strform).is_err());
 }

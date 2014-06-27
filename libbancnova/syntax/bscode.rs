@@ -22,6 +22,20 @@ impl CellAddress {
         CellAddress { a: a.to_i16().unwrap_or(0) }
     }
 
+    pub fn parse(text: String) -> BancResult<CellAddress> {
+        match Value::parse(text) {
+            Ok(v) => {
+                let i = v.as_i16();
+                if i < 0 || i >= 2000 {
+                    Err("cell address must be in the range [0, 2000]")
+                } else {
+                    Ok(CellAddress::new(i))
+                }
+            },
+            Err(e) => Err(e),
+        }
+    }
+
     pub fn as_value(&self) -> Value {
         Value::new(self.a)
     }

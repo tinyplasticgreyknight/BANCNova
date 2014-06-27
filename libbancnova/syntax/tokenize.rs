@@ -9,6 +9,7 @@ pub enum Token {
     Newline,
     NothingMarker,
     FencedLiteral(char, String),
+    AddressSign,
 }
 
 pub struct Tokenizer<R> {
@@ -125,6 +126,7 @@ impl<R: Reader> Iterator<Token> for Tokenizer<R> {
             ',' => Some(Comma),
             ' '|'\t' => self.next(),
             '\n' => Some(Newline),
+            '@' => Some(AddressSign),
             ''|'' => self.next(),
             _ => fail!("unexpected character '{}'", c)
         }
