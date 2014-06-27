@@ -166,6 +166,10 @@ pub fn from_str<'a>(text: &'a str) -> Tokenizer<BufReader<'a>> {
     Tokenizer::<BufReader>::from_str(text)
 }
 
+pub fn from_file(file: File) -> Tokenizer<File> {
+    Tokenizer::<File>::from_file(file)
+}
+
 pub fn vector(text: &str) -> Vec<Token> {
     Tokenizer::<BufReader>::vectorize(text)
 }

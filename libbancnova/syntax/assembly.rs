@@ -1,5 +1,4 @@
 use std::io::{BufferedWriter};
-use std::io::{File, Open, ReadWrite};
 use std::fmt::{Show, Formatter, FormatError};
 use syntax::bscode;
 use syntax::bscode::{Value, CellAddress, ToValue};

@@ -1,5 +1,4 @@
 use std::io::{BufferedWriter};
-#[cfg(test)]
 use std::io::{File, BufReader};
 use std::fmt::{Show, Formatter, FormatError, WriteError};
 use std::container::Container;
