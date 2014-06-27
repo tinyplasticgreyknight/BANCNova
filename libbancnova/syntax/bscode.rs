@@ -346,7 +346,7 @@ fn parse_tree() {
 
 #[test]
 fn parse_file() {
-    let file = File::open(&Path::new("../test_data/MM1SM1.SCN")).unwrap();
+    let file = File::open(&Path::new("test_data/MM1SM1.SCN")).unwrap();
     let tree = Tree::parse_file(file).unwrap();
     assert_eq!(tree.len(), 706);
     assert_eq!(tree.get(  0), &Instruction::new(31521,10001,700,108));
