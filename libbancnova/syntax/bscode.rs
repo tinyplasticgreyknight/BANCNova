@@ -69,7 +69,7 @@ impl Value {
         Value { x: x.to_i16().unwrap_or(0) }
     }
 
-    pub fn parse(text: &String) -> BancResult<Value> {
+    pub fn parse(text: String) -> BancResult<Value> {
         match from_str::<i16>(text.as_slice()) {
             Some(i) => Ok(Value::new(i)),
             None => Err("invalid value"),
@@ -105,7 +105,7 @@ impl Instruction {
         Instruction { values: [v0.as_value(), v1.as_value(), v2.as_value(), v3.as_value()] }
     }
 
-    pub fn parse(s0: &String, s1: &String, s2: &String, s3: &String) -> BancResult<Instruction> {
+    pub fn parse(s0: String, s1: String, s2: String, s3: String) -> BancResult<Instruction> {
         let v0 = Value::parse(s0);
         let v1 = Value::parse(s1);
         let v2 = Value::parse(s2);
@@ -115,6 +115,18 @@ impl Instruction {
             Ok(Instruction::new(v0.unwrap(), v1.unwrap(), v2.unwrap(), v3.unwrap()))
         } else {
             Err("not enough fields")
+        }
+    }
+
+    pub fn parse_vec(elements: &mut Vec<String>) -> BancResult<Option<Instruction>> {
+        if elements.len() != 4 {
+            return Ok(None);
+        }
+        let inst = Instruction::parse(elements.get(0).clone(), elements.get(1).clone(), elements.get(2).clone(), elements.get(3).clone());
+        elements.truncate(0);
+        match inst {
+            Err(msg) => { Err(msg) },
+            Ok(inst) => { Ok(Some(inst)) },
         }
     }
 
@@ -194,16 +206,10 @@ impl Tree {
                     if lasttoken == Comma {
                         elements.push(empty.clone());
                     }
-                    match elements.len() {
-                        0 => {},
-                        4 => {
-                            match Instruction::parse(elements.get(0), elements.get(1), elements.get(2), elements.get(3)) {
-                                Err(msg) => { return Err(msg); },
-                                Ok(inst) => { tree.push(inst); },
-                            }
-                            elements.truncate(0);
-                        },
-                        _ => fail!("not enough elements on line ({})", elements.len())
+                    match Instruction::parse_vec(&mut elements) {
+                        Ok(None) => fail!("not enough elements on line"),
+                        Ok(Some(inst)) => tree.push(inst),
+                        Err(e) => { return Err(e); },
                     }
                 },
                 _ => fail!("unexpected token [{}]", token)
@@ -213,11 +219,10 @@ impl Tree {
         if lasttoken == Comma {
             elements.push(empty.clone());
         }
-        if elements.len() == 4 {
-            match Instruction::parse(elements.get(0), elements.get(1), elements.get(2), elements.get(3)) {
-                Err(msg) => { return Err(msg); },
-                Ok(inst) => { tree.push(inst); },
-            }
+        match Instruction::parse_vec(&mut elements) {
+            Ok(None) => {},
+            Ok(Some(inst)) => tree.push(inst),
+            Err(e) => { return Err(e); }
         }
         Ok(tree)
     }

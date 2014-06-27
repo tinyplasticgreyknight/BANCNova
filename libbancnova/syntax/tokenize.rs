@@ -30,6 +30,11 @@ impl<R: Reader> Tokenizer<R> {
         Tokenizer { breader: box breader, ungotch: None }
     }
 
+    pub fn from_str<'a>(text: &'a str) -> Tokenizer<BufReader<'a>> {
+        let sreader = BufReader::new(text.as_bytes());
+        Tokenizer::<BufReader>::from_buf(sreader)
+    }
+
     pub fn from_buf<'a>(sreader: BufReader<'a>) -> Tokenizer<BufReader<'a>> {
         let breader = BufferedReader::new(sreader);
         Tokenizer { breader: box breader, ungotch: None }
@@ -124,6 +129,10 @@ impl<R: Reader> Iterator<Token> for Tokenizer<R> {
             _ => fail!("unexpected character '{}'", c)
         }
     }
+}
+
+pub fn from_str<'a>(text: &'a str) -> Tokenizer<BufReader<'a>> {
+    Tokenizer::<BufReader>::from_str(text)
 }
 
 pub fn vector(text: &str) -> Vec<Token> {

@@ -1,9 +1,8 @@
-use std::io::{BufferedReader};
 #[cfg(test)]
-use std::io::{BufReader};
 use syntax::bscode;
 use syntax::bscode::{Value, CellAddress, ToValue};
 use result::BancResult;
+use syntax::tokenize;
 
 #[deriving(PartialEq,Eq,Show)]
 pub enum Expression {
@@ -75,18 +74,6 @@ impl ToValue for Expression {
     }
 }
 
-fn parse_value<R: Reader>(buffer: &mut BufferedReader<R>) -> BancResult<Value> {
-    //Value::parse(buffer)
-    Ok(Value::new(42))
-}
-
-fn parse_chardata_1<R: Reader>(buffer: &mut BufferedReader<R>) -> BancResult<char> {
-    match buffer.read_char() {
-        Ok(c) => Ok(c),
-        Err(e) => Err(e.desc),
-    }
-}
-
 impl Expression {
     pub fn from_bscode(expr: Value) -> Option<Expression> {
         match expr.as_i16() {
@@ -98,26 +85,25 @@ impl Expression {
         }
     }
 
-    pub fn parse<R: Reader>(buffer: &mut BufferedReader<R>) -> BancResult<Expression> {
-        match buffer.read_char() {
-            Err(x) => Err(x.desc),
-            Ok(x) => match x {
-                '\'' => {
-                    let ret = parse_chardata_1(buffer).map(|v| {ImmChar(v)});
-                    match buffer.read_char() {
-                        Ok('\'') => ret,
-                        _ => Err("unclosed character"),
-                    }
-                },
-                '-' => {
-                    parse_value(buffer).map(|v| {Immediate(v)})
-                },
-                '0'..'9' => {
-                    parse_value(buffer).map(|v| {Immediate(v)})
-                },
-                '@' => Ok(Nothing),
-                _ => Err("read error"),
+    pub fn parse_string(text: &str) -> BancResult<Expression> {
+        let mut tokenizer = tokenize::from_str(text);
+        let tok = tokenizer.next();
+        if tok.is_none() {
+            return Err("read error");
+        }
+        match tok.unwrap() {
+            tokenize::FencedLiteral('\'', s) => {
+                if s.len() == 1 {
+                    let c = s.as_slice().char_at(0);
+                    Ok(ImmChar(c))
+                } else {
+                    Err("character literal too long")
+                }
             },
+            tokenize::IntegerLiteral(s) => {
+                Value::parse(s).map(|v| { Immediate(v) })
+            },
+            _ => Err("unexpected token"),
         }
     }
 }
@@ -405,8 +391,27 @@ fn render_arith_substr() {
 #[test]
 fn parse_expr_imm_char() {
     let strform = "'@'";
-    let reader = BufReader::new(strform.as_bytes());
-    let mut breader = BufferedReader::new(reader);
-    let expr = Expression::parse(&mut breader).unwrap();
+    let expr = Expression::parse_string(strform).unwrap();
     assert_eq!(expr, ImmChar('@'));
+}
+
+#[test]
+fn parse_expr_imm_int() {
+    let strform = "12345";
+    let expr = Expression::parse_string(strform).unwrap();
+    assert_eq!(expr, Immediate(Value::new(12345)));
+}
+
+#[test]
+fn parse_expr_imm_int2() {
+    let strform = "-12345";
+    let expr = Expression::parse_string(strform).unwrap();
+    assert_eq!(expr, Immediate(Value::new(-12345)));
+}
+
+#[test]
+fn parse_expr_imm_int3() {
+    let strform = "1234b";
+    let expr = Expression::parse_string(strform).unwrap();
+    assert_eq!(expr, Immediate(Value::new(1234)));
 }
