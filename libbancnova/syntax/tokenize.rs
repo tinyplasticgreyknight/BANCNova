@@ -1,8 +1,8 @@
-use std::iter::{Iterator,Peekable};
-use std::io::{BufferedReader, IoError, EndOfFile};
-use std::io::{BufReader};
+use std::iter::{Iterator};
+use std::io::{BufferedReader, EndOfFile};
+use std::io::{BufReader, File};
 
-#[deriving(Show, PartialEq, Eq)]
+#[deriving(Show, PartialEq, Eq, Clone)]
 pub enum Token {
     IntegerLiteral(String),
     Comma,
@@ -11,8 +11,8 @@ pub enum Token {
     FencedLiteral(char, String),
 }
 
-pub struct Tokenizer<'a,'b> {
-    breader: &'b mut BufferedReader<BufReader<'a>>,
+pub struct Tokenizer<R> {
+    breader: Box<BufferedReader<R>>,
     ungotch: Option<char>
 }
 
@@ -24,15 +24,20 @@ fn escape_character(e: char) -> char {
     }
 }
 
-impl<'a,'b> Tokenizer<'a,'b> {
-    pub fn new(breader: &'b mut BufferedReader<BufReader<'a>>) -> Tokenizer<'a,'b> {
-        Tokenizer { breader: breader, ungotch: None }
+impl<R: Reader> Tokenizer<R> {
+    pub fn from_file(file: File) -> Tokenizer<File> {
+        let breader = BufferedReader::new(file);
+        Tokenizer { breader: box breader, ungotch: None }
+    }
+
+    pub fn from_buf<'a>(sreader: BufReader<'a>) -> Tokenizer<BufReader<'a>> {
+        let breader = BufferedReader::new(sreader);
+        Tokenizer { breader: box breader, ungotch: None }
     }
 
     pub fn vectorize(subject: &str) -> Vec<Token> {
         let reader = BufReader::new(subject.as_bytes());
-        let mut breader: BufferedReader<BufReader> = BufferedReader::new(reader);
-        let mut tokenizer = Tokenizer::new(&mut breader);
+        let mut tokenizer = Tokenizer::<BufReader>::from_buf(reader);
         tokenizer.collect()
     }
 
@@ -101,7 +106,7 @@ impl<'a,'b> Tokenizer<'a,'b> {
     }
 }
 
-impl<'a,'b> Iterator<Token> for Tokenizer<'a,'b> {
+impl<R: Reader> Iterator<Token> for Tokenizer<R> {
     fn next(&mut self) -> Option<Token> {
         let c = self.getch();
         if c.is_none() {
@@ -115,28 +120,33 @@ impl<'a,'b> Iterator<Token> for Tokenizer<'a,'b> {
             ',' => Some(Comma),
             ' '|'\t' => self.next(),
             '\n' => Some(Newline),
+            ''|'' => self.next(),
             _ => fail!("unexpected character '{}'", c)
         }
     }
 }
 
+pub fn vector(text: &str) -> Vec<Token> {
+    Tokenizer::<BufReader>::vectorize(text)
+}
+
 #[test]
 fn comma() {
-    let tokens = Tokenizer::vectorize(",");
+    let tokens = vector(",");
     assert_eq!(1, tokens.len());
     assert_eq!(&Comma, tokens.get(0));
 }
 
 #[test]
 fn newline() {
-    let tokens = Tokenizer::vectorize("  \n  ");
+    let tokens = vector("  \n  ");
     assert_eq!(1, tokens.len());
     assert_eq!(&Newline, tokens.get(0));
 }
 
 #[test]
 fn comma_with_newline() {
-    let tokens = Tokenizer::vectorize(",\n,");
+    let tokens = vector(",\n,");
     assert_eq!(3, tokens.len());
     assert_eq!(&Comma, tokens.get(0));
     assert_eq!(&Newline, tokens.get(1));
@@ -145,7 +155,7 @@ fn comma_with_newline() {
 
 #[test]
 fn char_literal() {
-    let tokens = Tokenizer::vectorize("'a','\\\\','\\&', '\\n'");
+    let tokens = vector("'a','\\\\','\\&', '\\n'");
     assert_eq!(7, tokens.len());
     assert_eq!(&FencedLiteral('\'', "a".to_string()), tokens.get(0));
     assert_eq!(&Comma, tokens.get(1));
@@ -158,7 +168,7 @@ fn char_literal() {
 
 #[test]
 fn integer_literal() {
-    let tokens = Tokenizer::vectorize("0 123 -456 7890123456");
+    let tokens = vector("0 123 -456 7890123456");
     assert_eq!(4, tokens.len());
     assert_eq!(&IntegerLiteral("0".to_string()), tokens.get(0));
     assert_eq!(&IntegerLiteral("123".to_string()), tokens.get(1));

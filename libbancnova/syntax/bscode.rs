@@ -1,9 +1,10 @@
-use std::io::{BufferedReader, BufferedWriter};
+use std::io::{BufferedWriter};
 #[cfg(test)]
 use std::io::{File, BufReader};
 use std::fmt::{Show, Formatter, FormatError, WriteError};
 use std::container::Container;
 use std::string::String;
+use syntax::tokenize::{Tokenizer, IntegerLiteral, Comma, Newline};
 use result::BancResult;
 
 #[deriving(PartialEq,Eq)]
@@ -68,8 +69,11 @@ impl Value {
         Value { x: x.to_i16().unwrap_or(0) }
     }
 
-    pub fn parse<R: Reader>(buffer: &mut BufferedReader<R>) -> BancResult<Value> {
-        Err("not implemented")
+    pub fn parse(text: &String) -> BancResult<Value> {
+        match from_str::<i16>(text.as_slice()) {
+            Some(i) => Ok(Value::new(i)),
+            None => Err("invalid value"),
+        }
     }
 
     pub fn is_zero(&self) -> bool {
@@ -101,20 +105,14 @@ impl Instruction {
         Instruction { values: [v0.as_value(), v1.as_value(), v2.as_value(), v3.as_value()] }
     }
 
-    pub fn parse(line: String) -> BancResult<Instruction> {
-        let values: Vec<i16> = line.as_slice().splitn(',', 4).map(|s| {
-                match s.trim() {
-                    "" => Some(0),
-                    s => from_str::<i16>(s)
-                }
-            }).filter(|o| { o.is_some() }).map(|o| { o.unwrap() }).collect();
-        if values.len() == 4 {
-            Ok(Instruction::new(
-                    *values.get(0) as int,
-                    *values.get(1) as int,
-                    *values.get(2) as int,
-                    *values.get(3) as int
-                        ))
+    pub fn parse(s0: &String, s1: &String, s2: &String, s3: &String) -> BancResult<Instruction> {
+        let v0 = Value::parse(s0);
+        let v1 = Value::parse(s1);
+        let v2 = Value::parse(s2);
+        let v3 = Value::parse(s3);
+
+        if v0.is_ok() && v1.is_ok() && v2.is_ok() && v3.is_ok() {
+            Ok(Instruction::new(v0.unwrap(), v1.unwrap(), v2.unwrap(), v3.unwrap()))
         } else {
             Err("not enough fields")
         }
@@ -165,19 +163,60 @@ impl Tree {
         self.instructions.get(index)
     }
 
-    pub fn parse<R: Reader>(buffer: &mut BufferedReader<R>) -> BancResult<Tree> {
+    pub fn parse_string(text: &str) -> BancResult<Tree> {
+        let sreader = BufReader::new(text.as_bytes());
+        let mut tokenizer = Tokenizer::<BufReader>::from_buf(sreader);
+        Tree::parse(&mut tokenizer)
+    }
+
+    pub fn parse_file(file: File) -> BancResult<Tree> {
+        let mut tokenizer = Tokenizer::<File>::from_file(file);
+        Tree::parse(&mut tokenizer)
+    }
+
+    pub fn parse<R: Reader>(tokenizer: &mut Tokenizer<R>) -> BancResult<Tree> {
+        let mut tokenizer = tokenizer;
         let mut tree = Tree::new();
-        for oline in buffer.lines() {
-            match oline {
-                Err(_) => { return Err("read error"); },
-                Ok(line) => {
-                    if line.as_slice()!="\x1a" {
-                        match Instruction::parse(line) {
-                            Err(s) => { return Err(s); },
-                            Ok(inst) => { tree.push(inst); },
-                        }
+        let mut elements: Vec<String> = vec!();
+        let mut lasttoken = Newline;
+        let empty: String = "0".to_string();
+        for token in tokenizer {
+            match token.clone() {
+                IntegerLiteral(s) => {
+                    elements.push(s);
+                },
+                Comma => {
+                    if lasttoken == Newline || lasttoken == Comma {
+                        elements.push(empty.clone());
                     }
                 },
+                Newline => {
+                    if lasttoken == Comma {
+                        elements.push(empty.clone());
+                    }
+                    match elements.len() {
+                        0 => {},
+                        4 => {
+                            match Instruction::parse(elements.get(0), elements.get(1), elements.get(2), elements.get(3)) {
+                                Err(msg) => { return Err(msg); },
+                                Ok(inst) => { tree.push(inst); },
+                            }
+                            elements.truncate(0);
+                        },
+                        _ => fail!("not enough elements on line ({})", elements.len())
+                    }
+                },
+                _ => fail!("unexpected token [{}]", token)
+            }
+            lasttoken = token;
+        }
+        if lasttoken == Comma {
+            elements.push(empty.clone());
+        }
+        if elements.len() == 4 {
+            match Instruction::parse(elements.get(0), elements.get(1), elements.get(2), elements.get(3)) {
+                Err(msg) => { return Err(msg); },
+                Ok(inst) => { tree.push(inst); },
             }
         }
         Ok(tree)
@@ -242,9 +281,7 @@ fn syntax_tree() {
 #[test]
 fn parse_tree() {
     let strform = "5,6,7,8\n,,,";
-    let reader: BufReader = BufReader::new(strform.as_bytes());
-    let mut breader: BufferedReader<BufReader> = BufferedReader::new(reader);
-    let tree = Tree::parse(&mut breader).unwrap();
+    let tree = Tree::parse_string(strform).unwrap();
     assert_eq!(tree.len(), 2);
     assert_eq!(tree.get(0), &Instruction::new(5, 6, 7, 8));
     assert_eq!(tree.get(1), &Instruction::new(0, 0, 0, 0));
@@ -254,9 +291,8 @@ fn parse_tree() {
 
 #[test]
 fn parse_file() {
-    let file = File::open(&Path::new("../test_data/MM1SM1.SCN"));
-    let mut reader = BufferedReader::new(file);
-    let tree = Tree::parse(&mut reader).unwrap();
+    let file = File::open(&Path::new("../test_data/MM1SM1.SCN")).unwrap();
+    let tree = Tree::parse_file(file).unwrap();
     assert_eq!(tree.len(), 706);
     assert_eq!(tree.get(  0), &Instruction::new(31521,10001,700,108));
     assert_eq!(tree.get(100), &Instruction::new(3100,1528,1,10011));
