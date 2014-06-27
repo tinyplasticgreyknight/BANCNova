@@ -108,6 +108,7 @@ impl Expression {
                     _ => Err("expected integer after address-sign")
                 }
             },
+            tokenize::NothingMarker => Ok(Nothing),
             tokenize::IntegerLiteral(s) => {
                 Value::parse(s).map(|v| { Immediate(v) })
             },
@@ -441,4 +442,11 @@ fn parse_expr_cell_bad_addr() {
 fn parse_expr_cell_bad_addr2() {
     let strform = "@2001";
     assert!(Expression::parse_string(strform).is_err());
+}
+
+#[test]
+fn parse_expr_nothing() {
+    let strform = "Nothing";
+    let expr = Expression::parse_string(strform).unwrap();
+    assert_eq!(expr, Nothing);
 }

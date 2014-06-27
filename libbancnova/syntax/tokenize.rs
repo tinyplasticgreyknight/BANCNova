@@ -5,6 +5,7 @@ use std::io::{BufReader, File};
 #[deriving(Show, PartialEq, Eq, Clone)]
 pub enum Token {
     IntegerLiteral(String),
+    Name(String),
     Comma,
     Newline,
     NothingMarker,
@@ -68,6 +69,33 @@ impl<R: Reader> Tokenizer<R> {
         self.ungotch = Some(c);
     }
 
+    fn read_name(&mut self, c: char) -> Option<Token> {
+        let mut buffer = String::new();
+        buffer.push_char(c);
+        loop {
+            match self.breader.read_char() {
+                Err(ref s) if s.kind == EndOfFile => {
+                    break;
+                },
+                Err(_) => {
+                    return None;
+                },
+                Ok(c) if (c>='a' && c<='z') || (c>='A' && c<='Z') || c=='_' => {
+                    buffer.push_char(c);
+                },
+                Ok(c) => {
+                    self.ungetch(c);
+                    break;
+                },
+            }
+        }
+        if buffer.as_slice() == "Nothing" {
+            Some(NothingMarker)
+        } else {
+            Some(Name(buffer))
+        }
+    }
+
     fn read_integer_token(&mut self, c: char) -> Option<Token> {
         let mut buffer = String::new();
         buffer.push_char(c);
@@ -76,8 +104,7 @@ impl<R: Reader> Tokenizer<R> {
                 Err(ref s) if s.kind == EndOfFile => {
                     return Some(IntegerLiteral(buffer))
                 },
-                Err(s) => {
-                    println!("<{}>", s);
+                Err(_) => {
                     return None;
                 },
                 Ok(c) if c>='0' && c<='9' => {
@@ -127,6 +154,8 @@ impl<R: Reader> Iterator<Token> for Tokenizer<R> {
             ' '|'\t' => self.next(),
             '\n' => Some(Newline),
             '@' => Some(AddressSign),
+            'a'..'z' => self.read_name(c),
+            'A'..'Z' => self.read_name(c),
             ''|'' => self.next(),
             _ => fail!("unexpected character '{}'", c)
         }
