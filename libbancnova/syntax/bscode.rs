@@ -78,6 +78,11 @@ pub struct Tree {
     instructions: Vec<Instruction>,
 }
 
+pub struct TreeIterator<'a> {
+    tree: &'a Tree,
+    i: uint,
+}
+
 impl Value {
     pub fn new<T: ToPrimitive>(x: T) -> Value {
         Value { x: x.to_i16().unwrap_or(0) }
@@ -102,8 +107,9 @@ impl Value {
 impl Show for Value {
     fn fmt(&self, formatter: &mut Formatter) -> Result<(), FormatError> {
         let wres = if self.x == 0 {
-            // empty string
-            formatter.write_str("")
+            // zero could be shown as the empty string
+            // but that would be a pain
+            formatter.write_str("0")
         } else {
             formatter.write_int(self.x as int)
         };
@@ -244,6 +250,10 @@ impl Tree {
     pub fn render<W: Writer>(&self, buffer: &mut BufferedWriter<W>) {
         buffer.write_str(self.to_str().as_slice()).unwrap();
     }
+
+    pub fn iter<'a>(&'a self) -> TreeIterator<'a> {
+        TreeIterator { tree: self, i: 0 }
+    }
 }
 
 impl Container for Tree {
@@ -252,6 +262,33 @@ impl Container for Tree {
     }
     fn is_empty(&self) -> bool {
         self.instructions.is_empty()
+    }
+}
+
+impl<'a> TreeIterator<'a> {
+    fn maybe_get(&self, i: uint) -> Option<&'a Instruction> {
+        if self.i < self.tree.len() {
+            Some(self.tree.get(i))
+        } else {
+            None
+        }
+    }
+}
+
+impl<'a> Iterator<&'a Instruction> for TreeIterator<'a> {
+    fn next(&mut self) -> Option<&'a Instruction> {
+        let o = self.maybe_get(self.i);
+        self.i += 1;
+        o
+    }
+}
+
+impl<'a> RandomAccessIterator<&'a Instruction> for TreeIterator<'a> {
+    fn indexable(&self) -> uint {
+        self.tree.len()
+    }
+    fn idx(&mut self, i: uint) -> Option<&'a Instruction> {
+        self.maybe_get(i)
     }
 }
 
@@ -294,7 +331,7 @@ fn syntax_tree() {
     tree.push(Instruction::new(1, 2, 3, 4));
     tree.push(Instruction::new(2, 3, 0, 0));
     let actual = tree.to_str();
-    assert_eq!(actual, "1,2,3,4\n2,3,,\n".to_string());
+    assert_eq!(actual, "1,2,3,4\n2,3,0,0\n".to_string());
 }
 
 #[test]
@@ -305,7 +342,7 @@ fn parse_tree() {
     assert_eq!(tree.get(0), &Instruction::new(5, 6, 7, 8));
     assert_eq!(tree.get(1), &Instruction::new(0, 0, 0, 0));
     let actual = tree.to_str();
-    assert_eq!(actual, "5,6,7,8\n,,,\n".to_string());
+    assert_eq!(actual, "5,6,7,8\n0,0,0,0\n".to_string());
 }
 
 #[test]

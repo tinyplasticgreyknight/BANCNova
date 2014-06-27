@@ -1,24 +1,24 @@
 use std::io::{BufferedWriter};
+use std::io::{File, Open, ReadWrite};
 use std::fmt::{Show, Formatter, FormatError};
-//#[cfg(test)]
 use syntax::bscode;
 use syntax::bscode::{Value, CellAddress, ToValue};
 use result::BancResult;
 use syntax::tokenize;
 
-#[deriving(PartialEq,Eq,Show)]
+#[deriving(PartialEq,Eq)]
 pub enum Expression {
     Immediate(Value),
     ImmChar(char),
     Cell(CellAddress),
     Nothing,
 }
-#[deriving(PartialEq,Eq,Show)]
+#[deriving(PartialEq,Eq)]
 pub enum UnaryComparator {
     IsNull,
     IsNotNull,
 }
-#[deriving(PartialEq,Eq,Show)]
+#[deriving(PartialEq,Eq)]
 pub enum BinaryComparator {
     LessOrEqual,
     Equal,
@@ -44,7 +44,7 @@ pub enum ArithTerm {
     ArithCell(ArithOperator, CellAddress),
     ArithImmediate(ArithOperator, Value),
 }
-#[deriving(PartialEq,Eq,Show)]
+#[deriving(PartialEq,Eq)]
 pub enum Comparison {
     UnaryComparison(Expression, UnaryComparator),
     BinaryComparison(Expression, BinaryComparator, Expression),
@@ -119,6 +119,30 @@ impl Expression {
     }
 }
 
+impl Show for Expression {
+    #[allow(unused_must_use)]
+    fn fmt(&self, formatter: &mut Formatter) -> Result<(), FormatError> {
+        match self {
+            &Immediate(v) => {
+                v.fmt(formatter)
+            },
+            &ImmChar(c) => {
+                formatter.write_char('\'');
+                formatter.write_char(c);
+                formatter.write_char('\'');
+                Ok(())
+            },
+            &Cell(a) => {
+                formatter.write_char('@');
+                a.as_value().fmt(formatter)
+            },
+            &Nothing => {
+                "Nothing".fmt(formatter)
+            }
+        }
+    }
+}
+
 impl ToValue for UnaryComparator {
     fn as_value(&self) -> Value {
         match self {
@@ -179,6 +203,17 @@ impl ArithTerm {
                 let val = (val-22000)/10;
                 Some(ArithImmediate(aoper, (val as int).as_value()))
             },
+        }
+    }
+
+    fn effective(&self) -> bool {
+        match self {
+            &ArithCell(_, _) => true,
+            &ArithImmediate(Add, v) if v.as_i16() == 0 => false,
+            &ArithImmediate(Subtract, v) if v.as_i16() == 0 => false,
+            &ArithImmediate(Multiply, v) if v.as_i16() == 1 => false,
+            &ArithImmediate(Divide, v) if v.as_i16() == 1 => false,
+            _ => true,
         }
     }
 }
@@ -267,6 +302,16 @@ impl Show for ArithOperator {
     }
 }
 
+impl Show for UnaryComparator {
+    #[allow(unused_must_use)]
+    fn fmt(&self, formatter: &mut Formatter) -> Result<(), FormatError> {
+        match self {
+            &IsNull => "ISNULL",
+            &IsNotNull => "ISNOTNULL",
+        }.fmt(formatter)
+    }
+}
+
 impl Comparison {
     pub fn from_bscode(expr1: Value, op: Value, expr2: Value) -> Option<Comparison> {
         let o_expr1 = Expression::from_bscode(expr1);
@@ -277,6 +322,51 @@ impl Comparison {
             (Some(expr1), Some(op), _, Some(Nothing)) => Some(UnaryComparison(expr1, op)),
             (Some(expr1), _, Some(op), Some(expr2)) => Some(BinaryComparison(expr1, op, expr2)),
             _ => None,
+        }
+    }
+}
+
+impl Show for Comparison {
+    #[allow(unused_must_use)]
+    fn fmt(&self, formatter: &mut Formatter) -> Result<(), FormatError> {
+        match self {
+            &UnaryComparison(expr, comp) => {
+                comp.fmt(formatter);
+                formatter.write_char('(');
+                expr.fmt(formatter);
+                formatter.write_char(')');
+                Ok(())
+            },
+            &BinaryComparison(expr1, LessOrEqual, expr2) => {
+                expr1.fmt(formatter);
+                formatter.write_str(" <= ");
+                expr2.fmt(formatter);
+                Ok(())
+            },
+            &BinaryComparison(expr1, Equal, expr2) => {
+                expr1.fmt(formatter);
+                formatter.write_str(" == ");
+                expr2.fmt(formatter);
+                Ok(())
+            },
+            &BinaryComparison(expr1, GreaterOrEqual, expr2) => {
+                expr1.fmt(formatter);
+                formatter.write_str(" >= ");
+                expr2.fmt(formatter);
+                Ok(())
+            },
+            &BinaryComparison(expr1, Greater, expr2) => {
+                expr1.fmt(formatter);
+                formatter.write_str(" > ");
+                expr2.fmt(formatter);
+                Ok(())
+            },
+            &BinaryComparison(expr1, NotEqual, expr2) => {
+                expr1.fmt(formatter);
+                formatter.write_str(" != ");
+                expr2.fmt(formatter);
+                Ok(())
+            },
         }
     }
 }
@@ -375,22 +465,84 @@ fn render_address(addr: CellAddress, formatter: &mut Formatter) -> Result<(), Fo
     addr.as_value().as_i16().fmt(formatter)
 }
 
+#[allow(unused_must_use)]
+fn render_arith_terms(t1: ArithTerm, t2: ArithTerm, t3: ArithTerm, formatter: &mut Formatter) -> Result<(), FormatError> {
+    let p1 = t1.effective();
+    let p2 = t2.effective();
+    let p3 = t3.effective();
+
+    if p1 || p2 || p3 {
+        formatter.write_str(", ");
+        t1.fmt(formatter);
+        if p2 || p3 {
+            formatter.write_str(", ");
+            t2.fmt(formatter);
+            if p3 {
+                formatter.write_str(", ");
+                t3.fmt(formatter);
+            }
+        }
+    }
+    Ok(())
+}
+
 impl Show for Instruction {
     #[allow(unused_must_use)]
     fn fmt(&self, formatter: &mut Formatter) -> Result<(), FormatError> {
         match self {
             &Arithmetic(addr, t1, t2, t3) => {
-                "SETA".fmt(formatter);
+                "SET".fmt(formatter);
                 formatter.write_char(' ');
                 render_address(addr, formatter);
+                render_arith_terms(t1, t2, t3, formatter)
+            },
+            &NewPage => {
+                "NEWPAGE".fmt(formatter)
+            },
+            &SaveAddress => {
+                "SAVEADDR".fmt(formatter)
+            },
+            &AutoSave => {
+                "AUTOSAVE".fmt(formatter)
+            },
+            &SimpleConditional(cmp) => {
+                "COND".fmt(formatter);
+                formatter.write_char(' ');
+                cmp.fmt(formatter)
+            },
+            &BlockConditional(cmp) => {
+                "STARTCOND".fmt(formatter);
+                formatter.write_char(' ');
+                cmp.fmt(formatter);
+                Ok(())
+            },
+            &BlockEnd => {
+                "ENDCOND".fmt(formatter)
+            },
+            &ReverseBlockConditional(cmp) => {
+                "STARTRCOND".fmt(formatter);
+                formatter.write_char(' ');
+                cmp.fmt(formatter)
+            },
+            &ReverseBlockEnd => {
+                "ENDRCOND".fmt(formatter)
+            },
+            &GotoPage(v) => {
+                "GOTO".fmt(formatter);
+                formatter.write_char(' ');
+                v.fmt(formatter)
+            },
+            &Unrecognised(v0, v1, v2, v3) => {
+                "RAW".fmt(formatter);
+                formatter.write_char(' ');
+                v0.fmt(formatter);
                 formatter.write_str(", ");
-                t1.fmt(formatter);
+                v1.fmt(formatter);
                 formatter.write_str(", ");
-                t2.fmt(formatter);
+                v2.fmt(formatter);
                 formatter.write_str(", ");
-                t3.fmt(formatter)
-            }
-            _ => {"???".fmt(formatter)}
+                v3.fmt(formatter)
+            },
         }
     }
 }
@@ -526,7 +678,7 @@ fn parse_expr_nothing() {
 #[test]
 fn render_arith() {
     let inst = Arithmetic(CellAddress::new(350), ArithImmediate(Add, 42.as_value()), ArithCell(Multiply, CellAddress::new(269)), ArithImmediate(Logarithm, 53.as_value()));
-    let expected_form = "SETA @350, ADD(42), MUL(@269), LOG(53)";
+    let expected_form = "SET @350, ADD(42), MUL(@269), LOG(53)";
     let rendered_form = inst.to_str();
     assert_eq!(rendered_form.as_slice(), expected_form);
 }
@@ -538,5 +690,5 @@ fn disassemble_line() {
     assert_eq!(bstree.len(), 1);
     let inst = Instruction::from_bscode(bstree.get(0));
     let disassembled = inst.to_str();
-    assert_eq!("SETA @350, ADD(42), MUL(@269), LOG(53)", disassembled.as_slice());
+    assert_eq!("SET @350, ADD(42), MUL(@269), LOG(53)", disassembled.as_slice());
 }
