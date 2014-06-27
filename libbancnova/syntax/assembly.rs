@@ -1,4 +1,6 @@
-#[cfg(test)]
+use std::io::{BufferedWriter};
+use std::fmt::{Show, Formatter, FormatError};
+//#[cfg(test)]
 use syntax::bscode;
 use syntax::bscode::{Value, CellAddress, ToValue};
 use result::BancResult;
@@ -24,7 +26,7 @@ pub enum BinaryComparator {
     Greater,
     NotEqual,
 }
-#[deriving(PartialEq,Eq,Show)]
+#[deriving(PartialEq,Eq)]
 pub enum ArithOperator {
     Length,
     Subtract,
@@ -37,7 +39,7 @@ pub enum ArithOperator {
     TruncateInt,
     Date,
 }
-#[deriving(PartialEq,Eq,Show)]
+#[deriving(PartialEq,Eq)]
 pub enum ArithTerm {
     ArithCell(ArithOperator, CellAddress),
     ArithImmediate(ArithOperator, Value),
@@ -48,7 +50,7 @@ pub enum Comparison {
     BinaryComparison(Expression, BinaryComparator, Expression),
 }
 
-#[deriving(PartialEq,Eq,Show)]
+#[deriving(PartialEq,Eq)]
 pub enum Instruction {
     Unrecognised(Value, Value, Value, Value),
     NewPage,
@@ -190,6 +192,28 @@ impl ToValue for ArithTerm {
     }
 }
 
+impl Show for ArithTerm {
+    #[allow(unused_must_use)]
+    fn fmt(&self, formatter: &mut Formatter) -> Result<(), FormatError> {
+        match self {
+            &ArithCell(op, addr) => {
+                op.fmt(formatter);
+                formatter.write_char('(');
+                render_address(addr, formatter);
+                formatter.write_char(')');
+                Ok(())
+            },
+            &ArithImmediate(op, val) => {
+                op.fmt(formatter);
+                formatter.write_char('(');
+                val.fmt(formatter);
+                formatter.write_char(')');
+                Ok(())
+            },
+        }
+    }
+}
+
 impl ArithOperator {
     pub fn from_bscode(val: i16) -> Option<ArithOperator> {
         match val {
@@ -222,6 +246,24 @@ impl ToValue for ArithOperator {
             &TruncateInt => 8.as_value(),
             &Date => 9.as_value(),
         }
+    }
+}
+
+impl Show for ArithOperator {
+    #[allow(unused_must_use)]
+    fn fmt(&self, formatter: &mut Formatter) -> Result<(), FormatError> {
+        match self {
+            &Length => "LEN",
+            &Subtract => "SUB",
+            &Add => "ADD",
+            &Multiply => "MUL",
+            &Divide => "DIV",
+            &Substring => "SUBSTR",
+            &System => "SYSTEM",
+            &Logarithm => "LOG",
+            &TruncateInt => "TRUNC",
+            &Date => "DATE",
+        }.fmt(formatter)
     }
 }
 
@@ -321,6 +363,36 @@ impl Instruction {
             x => conditional_as_bscode(x).unwrap(),
         }
     }
+
+    pub fn render<W: Writer>(&self, buffer: &mut BufferedWriter<W>) {
+        buffer.write_str(self.to_str().as_slice()).unwrap()
+    }
+}
+
+#[allow(unused_must_use)]
+fn render_address(addr: CellAddress, formatter: &mut Formatter) -> Result<(), FormatError> {
+    formatter.write_char('@');
+    addr.as_value().as_i16().fmt(formatter)
+}
+
+impl Show for Instruction {
+    #[allow(unused_must_use)]
+    fn fmt(&self, formatter: &mut Formatter) -> Result<(), FormatError> {
+        match self {
+            &Arithmetic(addr, t1, t2, t3) => {
+                "SETA".fmt(formatter);
+                formatter.write_char(' ');
+                render_address(addr, formatter);
+                formatter.write_str(", ");
+                t1.fmt(formatter);
+                formatter.write_str(", ");
+                t2.fmt(formatter);
+                formatter.write_str(", ");
+                t3.fmt(formatter)
+            }
+            _ => {"???".fmt(formatter)}
+        }
+    }
 }
 
 #[test]
@@ -343,55 +415,55 @@ fn parse_reverse_block_end() {
 }
 
 #[test]
-fn render_newpage_inst() {
+fn renderbs_newpage_inst() {
     let inst = NewPage;
     let bscode = inst.as_bscode();
     assert_eq!(bscode, bscode::Instruction::new(2999,0,0,0));
 }
 #[test]
-fn render_simple_cond_unary() {
+fn renderbs_simple_cond_unary() {
     let inst = SimpleConditional(UnaryComparison(Immediate(42.as_value()), IsNull));
     let bscode = inst.as_bscode();
     assert_eq!(bscode, bscode::Instruction::new(3000,10042,1,0));
 }
 #[test]
-fn render_simple_cond_binary() {
+fn renderbs_simple_cond_binary() {
     let inst = SimpleConditional(BinaryComparison(Immediate(42.as_value()), GreaterOrEqual, Cell(CellAddress::new(69))));
     let bscode = inst.as_bscode();
     assert_eq!(bscode, bscode::Instruction::new(3000,10042,4,69));
 }
 #[test]
-fn render_block_end() {
+fn renderbs_block_end() {
     let inst = BlockEnd;
     let bscode = inst.as_bscode();
     assert_eq!(bscode, bscode::Instruction::new(3001,0,0,0));
 }
 #[test]
-fn render_reverse_block_end() {
+fn renderbs_reverse_block_end() {
     let inst = ReverseBlockEnd;
     let bscode = inst.as_bscode();
     assert_eq!(bscode, bscode::Instruction::new(3101,0,0,0));
 }
 #[test]
-fn render_save_address() {
+fn renderbs_save_address() {
     let inst = SaveAddress;
     let bscode = inst.as_bscode();
     assert_eq!(bscode, bscode::Instruction::new(8400,0,0,0));
 }
 #[test]
-fn render_goto_page() {
+fn renderbs_goto_page() {
     let inst = GotoPage(42.as_value());
     let bscode = inst.as_bscode();
     assert_eq!(bscode, bscode::Instruction::new(8500,0,42,0));
 }
 #[test]
-fn render_autosave() {
+fn renderbs_autosave() {
     let inst = AutoSave;
     let bscode = inst.as_bscode();
     assert_eq!(bscode, bscode::Instruction::new(9001,0,0,0));
 }
 #[test]
-fn render_arith_substr() {
+fn renderbs_arith_substr() {
     let inst = Arithmetic(CellAddress::new(350), ArithImmediate(Add, 42.as_value()), ArithCell(Multiply, CellAddress::new(269)), ArithImmediate(Logarithm, 53.as_value()));
     let bscode = inst.as_bscode();
     assert_eq!(bscode, bscode::Instruction::new(10350,22422,2693,22537));
@@ -449,4 +521,12 @@ fn parse_expr_nothing() {
     let strform = "Nothing";
     let expr = Expression::parse_string(strform).unwrap();
     assert_eq!(expr, Nothing);
+}
+
+#[test]
+fn render_arith() {
+    let inst = Arithmetic(CellAddress::new(350), ArithImmediate(Add, 42.as_value()), ArithCell(Multiply, CellAddress::new(269)), ArithImmediate(Logarithm, 53.as_value()));
+    let expected_form = "SETA @350, ADD(42), MUL(@269), LOG(53)";
+    let rendered_form = inst.to_str();
+    assert_eq!(rendered_form.as_slice(), expected_form);
 }
