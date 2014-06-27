@@ -530,3 +530,13 @@ fn render_arith() {
     let rendered_form = inst.to_str();
     assert_eq!(rendered_form.as_slice(), expected_form);
 }
+
+#[test]
+fn disassemble_line() {
+    let strform = "10350,22422,2693,22537";
+    let bstree = bscode::Tree::parse_string(strform).unwrap();
+    assert_eq!(bstree.len(), 1);
+    let inst = Instruction::from_bscode(bstree.get(0));
+    let disassembled = inst.to_str();
+    assert_eq!("SETA @350, ADD(42), MUL(@269), LOG(53)", disassembled.as_slice());
+}
