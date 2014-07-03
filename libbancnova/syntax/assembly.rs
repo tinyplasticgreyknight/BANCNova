@@ -737,6 +737,8 @@ impl Instruction {
             9001 if all_args_zero => AutoSave,
             9200|9201|9300|9301|9400|9401 => {
                 let flag = opcode%10 == 1;
+                // TODO: what does it really mean when the addr arguments are > 2000 ?
+                // is it really a numeric literal?  not convinced
                 match (DataModelField::new(a), AddressOrValue::parse(b), AddressOrValue::parse(c)) {
                     (Some(field), Some(addr1), Some(addr2)) => match opcode {
                         9200|2301 => DataPut(flag, field, addr1, addr2),
