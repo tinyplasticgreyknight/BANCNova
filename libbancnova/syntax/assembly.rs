@@ -85,7 +85,7 @@ pub enum DataModelField {
 #[deriving(PartialEq,Eq)]
 pub enum Instruction {
     Unrecognised(Value, Value, Value, Value),
-    NewPage,
+    NewPage(Value),
     SimpleConditional(Comparison),
     BlockConditional(Comparison),
     BlockEnd,
@@ -688,7 +688,7 @@ impl Instruction {
                 let p2 = Position::from_packed(c);
                 ShowPrompt(CellAddress::new(opcode), p1, r, p2)
             },
-            2999 if all_args_zero => NewPage,
+            2999 if a.is_zero() && b.is_zero() => NewPage(c),
             3000|3001|3100|3101 => {
                 let ocomp = Comparison::from_bscode(a, b, c);
                 if all_args_zero && (opcode==3001 || opcode==3101) {
@@ -760,7 +760,7 @@ impl Instruction {
     pub fn as_bscode(&self) -> bscode::Instruction {
         match self {
             &ShowPrompt(addr, p1, r, p2) => bscode::Instruction::new(addr.as_value(), p1.as_packed(), r, p2.as_packed()),
-            &NewPage => bscode::Instruction::new(2999,0,0,0),
+            &NewPage(v) => bscode::Instruction::new(2999,0,0,v),
             &BlockEnd => bscode::Instruction::new(3001,0,0,0),
             &ReverseBlockEnd => bscode::Instruction::new(3101,0,0,0),
             &Window(clr, p1, p2) => bscode::Instruction::new(8000, clr, p1.as_packed(), p2.as_packed()),
@@ -792,7 +792,6 @@ impl Instruction {
 
     pub fn parse_noarg(name: String) -> BancResult<Instruction> {
         match name.as_slice() {
-            "NEWPAGE" => Ok(NewPage),
             "SAVEADDR" => Ok(SaveAddress),
             "AUTOSOLVE" => Ok(AutoSolve),
             "AUTOSAVE" => Ok(AutoSave),
@@ -908,6 +907,14 @@ impl Instruction {
                     _ => { return Err("SHOW must have a number for its fourth argument"); }
                 };
                 Ok(ShowPrompt(addr, p1, r, p2))
+            },
+            "NEWPAGE" => {
+                let v = match args.get(0) {
+                    &ArgExpr(Immediate(v)) => v,
+                    &ArgEmpty => Zero::zero(),
+                    _ => { return Err("NEWPAGE must have either a number or nothing as its argument") },
+                };
+                Ok(NewPage(v))
             },
             "SET" => {
                 let addr = match args.get(0) {
@@ -1205,8 +1212,13 @@ impl Show for Instruction {
                 addr.fmt(formatter);
                 render_arith_terms(t1, t2, t3, formatter)
             },
-            &NewPage => {
-                "NEWPAGE".fmt(formatter)
+            &NewPage(v) => {
+                let mut status = "NEWPAGE".fmt(formatter);
+                if ! v.is_zero() {
+                    formatter.write_char(' ');
+                    status = v.fmt(formatter);
+                }
+                return status;
             },
             &Window(clr, p1, p2) => {
                 "WINDOW".fmt(formatter);
