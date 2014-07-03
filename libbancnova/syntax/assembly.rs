@@ -55,6 +55,12 @@ pub enum Comparison {
 }
 
 #[deriving(PartialEq,Eq)]
+pub struct Position {
+    x: Value,
+    y: Value,
+}
+
+#[deriving(PartialEq,Eq)]
 pub enum Instruction {
     Unrecognised(Value, Value, Value, Value),
     NewPage,
@@ -67,6 +73,7 @@ pub enum Instruction {
     GotoPage(Value),
     AutoSave,
     Arithmetic(CellAddress, ArithTerm, ArithTerm, ArithTerm),
+    ShowPrompt(CellAddress, Position, Value, Position),
 }
 
 #[deriving(PartialEq,Eq,Show)]
@@ -163,6 +170,46 @@ impl Show for Expression {
                 "Nothing".fmt(formatter)
             }
         }
+    }
+}
+
+impl Position {
+    pub fn new<T0: ToValue, T1: ToValue>(v0: T0, v1: T1) -> Position {
+        Position { x: v0.as_value(), y: v1.as_value() }
+    }
+    pub fn from_packed(packed: Value) -> Position {
+        let v = packed.as_i16();
+        let x = v % 100;
+        let y = v / 100;
+        Position::new(x as int, y as int)
+    }
+    pub fn as_packed(&self) -> Value {
+        let x = self.x.as_i16();
+        let y = self.y.as_i16();
+        Value::new(x + 100*y)
+    }
+}
+
+impl Add<Position, Position> for Position {
+    fn add(&self, rhs: &Position) -> Position {
+        Position::new(self.x+rhs.x, self.y+rhs.y)
+    }
+}
+
+impl Zero for Position {
+    fn zero() -> Position {
+        Position::new(0, 0)
+    }
+    fn is_zero(&self) -> bool {
+        self.x.is_zero() && self.y.is_zero()
+    }
+}
+
+impl Show for Position {
+    #[allow(unused_must_use)]
+    fn fmt(&self, formatter: &mut Formatter) -> Result<(), FormatError> {
+        let v = self.as_packed();
+        v.fmt(formatter)
     }
 }
 
@@ -520,6 +567,12 @@ impl Instruction {
         let (a, b, c) = (*inst.get(1), *inst.get(2), *inst.get(3));
         let all_args_zero = a.is_zero() && b.is_zero() && c.is_zero();
         match opcode {
+            1..2000 => {
+                let p1 = Position::from_packed(a);
+                let r = b;
+                let p2 = Position::from_packed(c);
+                ShowPrompt(CellAddress::new(opcode), p1, r, p2)
+            },
             2999 if all_args_zero => NewPage,
             3000|3001|3101 => {
                 let ocomp = Comparison::from_bscode(a, b, c);
@@ -554,6 +607,7 @@ impl Instruction {
 
     pub fn as_bscode(&self) -> bscode::Instruction {
         match self {
+            &ShowPrompt(addr, p1, r, p2) => bscode::Instruction::new(addr.as_value(), p1.as_packed(), r, p2.as_packed()),
             &NewPage => bscode::Instruction::new(2999,0,0,0),
             &BlockEnd => bscode::Instruction::new(3001,0,0,0),
             &ReverseBlockEnd => bscode::Instruction::new(3101,0,0,0),
@@ -614,7 +668,33 @@ impl Instruction {
             return Err("wrong number of arguments");
         }
         let targs = (args.get(0), args.get(1), args.get(2), args.get(3));
+        let vargs: Vec<Option<Value>> = args.iter().map(|a| match a {
+                &ArgExpr(Immediate(v)) => Some(v),
+                &ArgEmpty => Some(Zero::zero()),
+                _ => None,
+            }).collect();
         match name.as_slice() {
+            "SHOW" => {
+                let addr = match args.get(0) {
+                    &ArgExpr(Cell(addr)) => addr,
+                    _ => { return Err("SHOW must have an address for its first argument") },
+                };
+                let p1 = match args.get(1) {
+                    &ArgExpr(Immediate(v)) => Position::from_packed(v),
+                    &ArgEmpty => Zero::zero(),
+                    _ => { return Err("SHOW must have a number for its second argument"); }
+                };
+                let r = match vargs.get(2) {
+                    &Some(v) => v,
+                    _ => { return Err("SHOW must have a number for its third argument") },
+                };
+                let p2 = match args.get(3) {
+                    &ArgExpr(Immediate(v)) => Position::from_packed(v),
+                    &ArgEmpty => Zero::zero(),
+                    _ => { return Err("SHOW must have a number for its fourth argument"); }
+                };
+                Ok(ShowPrompt(addr, p1, r, p2))
+            },
             "SET" => {
                 let addr = match args.get(0) {
                     &ArgExpr(Cell(addr)) => addr,
@@ -791,6 +871,34 @@ impl Show for Instruction {
     #[allow(unused_must_use)]
     fn fmt(&self, formatter: &mut Formatter) -> Result<(), FormatError> {
         match self {
+            &ShowPrompt(addr, p1, r, p2) => {
+                "SHOW".fmt(formatter);
+                formatter.write_char(' ');
+                let mut status = addr.fmt(formatter);
+                let (p1z, rz, p2z) = (p1.is_zero(), r.is_zero(), p2.is_zero());
+                if p1z && rz && p2z {
+                    return status;
+                }
+                formatter.write_str(", ");
+                if ! p1z {
+                    status = p1.fmt(formatter);
+                }
+                if r.is_zero() && p2.is_zero() {
+                    return status;
+                }
+                formatter.write_str(", ");
+                if !rz {
+                    status = r.fmt(formatter);
+                }
+                if p2z {
+                    return status;
+                }
+                formatter.write_str(", ");
+                if !p2z {
+                    status = p2.fmt(formatter);
+                }
+                return status;
+            },
             &Arithmetic(addr, t1, t2, t3) => {
                 "SET".fmt(formatter);
                 formatter.write_char(' ');

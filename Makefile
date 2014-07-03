@@ -6,6 +6,7 @@ LIBSOURCES=$(shell find $(LIBSRCDIR) -iname '*.rs')
 UTILSOURCES=$(shell find $(EXESRCDIR)/util -iname '*.rs')
 
 TESTNAME=$(BINDIR)/test-harness
+ROBINFILE=test_data/MM1SM1
 
 RUSTC=rustc
 RFLAGS=-L $(BINDIR) --out-dir $(BINDIR)
@@ -21,6 +22,13 @@ bin/%: $(EXESRCDIR)/%.rs $(UTILSOURCES)
 
 test: $(TESTNAME)
 	$(TESTNAME)
+
+roundrobin: all
+	-rm $(ROBINFILE).asm
+	-rm $(ROBINFILE).out
+	bin/disassemble $(ROBINFILE).SCN $(ROBINFILE).asm
+	bin/assemble $(ROBINFILE).asm $(ROBINFILE).out
+	bin/compare $(ROBINFILE).SCN $(ROBINFILE).out
 
 $(TESTNAME): $(SOURCES)
 	$(RUSTC) $(TFLAGS) -o $(TESTNAME) $(LIBSRCDIR)/lib.rs
