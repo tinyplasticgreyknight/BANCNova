@@ -11,11 +11,15 @@ pub enum Token {
     NothingMarker,
     FencedLiteral(char, String),
     AddressSign,
+    OpenBracket(char),
+    CloseBracket(char),
+    OperToken(String),
 }
 
 pub struct Tokenizer<R> {
     breader: Box<BufferedReader<R>>,
-    ungotch: Option<char>
+    ungotch: Option<char>,
+    untok: Option<Token>,
 }
 
 fn escape_character(e: char) -> char {
@@ -29,7 +33,7 @@ fn escape_character(e: char) -> char {
 impl<R: Reader> Tokenizer<R> {
     pub fn from_file(file: File) -> Tokenizer<File> {
         let breader = BufferedReader::new(file);
-        Tokenizer { breader: box breader, ungotch: None }
+        Tokenizer { breader: box breader, ungotch: None, untok: None }
     }
 
     pub fn from_str<'a>(text: &'a str) -> Tokenizer<BufReader<'a>> {
@@ -39,7 +43,7 @@ impl<R: Reader> Tokenizer<R> {
 
     pub fn from_buf<'a>(sreader: BufReader<'a>) -> Tokenizer<BufReader<'a>> {
         let breader = BufferedReader::new(sreader);
-        Tokenizer { breader: box breader, ungotch: None }
+        Tokenizer { breader: box breader, ungotch: None, untok: None }
     }
 
     pub fn vectorize(subject: &str) -> Vec<Token> {
@@ -102,7 +106,7 @@ impl<R: Reader> Tokenizer<R> {
         loop {
             match self.breader.read_char() {
                 Err(ref s) if s.kind == EndOfFile => {
-                    return Some(IntegerLiteral(buffer))
+                    return Some(IntegerLiteral(buffer));
                 },
                 Err(_) => {
                     return None;
@@ -112,7 +116,29 @@ impl<R: Reader> Tokenizer<R> {
                 },
                 Ok(c) => {
                     self.ungetch(c);
-                    return Some(IntegerLiteral(buffer))
+                    return Some(IntegerLiteral(buffer));
+                },
+            }
+        }
+    }
+
+    fn read_oper(&mut self, c: char) -> Option<Token> {
+        let mut buffer = String::new();
+        buffer.push_char(c);
+        loop {
+            match self.breader.read_char() {
+                Err(ref s) if s.kind == EndOfFile => {
+                    return Some(OperToken(buffer));
+                },
+                Err(_) => {
+                    return None;
+                },
+                Ok(r@'=')|Ok(r@'>')|Ok(r@'<')|Ok(r@'!') => {
+                    buffer.push_char(r);
+                },
+                Ok(c) => {
+                    self.ungetch(c);
+                    return Some(OperToken(buffer));
                 },
             }
         }
@@ -153,10 +179,15 @@ impl<R: Reader> Tokenizer<R> {
             },
         }
     }
-}
 
-impl<R: Reader> Iterator<Token> for Tokenizer<R> {
-    fn next(&mut self) -> Option<Token> {
+    pub fn get_token(&mut self) -> Option<Token> {
+        match self.untok.clone() {
+            Some(tk) => {
+                self.untok = None;
+                return Some(tk);
+            },
+            None => {},
+        }
         let c = self.getch();
         if c.is_none() {
             return None;
@@ -173,8 +204,33 @@ impl<R: Reader> Iterator<Token> for Tokenizer<R> {
             'a'..'z' => self.read_name(c),
             'A'..'Z' => self.read_name(c),
             ''|'' => self.next(),
+            '('|'['|'{' => Some(OpenBracket(c)),
+            ')'|']'|'}' => Some(CloseBracket(c)),
+            '='|'!'|'<'|'>' => self.read_oper(c),
             _ => fail!("unexpected character '{}'", c)
         }
+    }
+
+    pub fn unget_token(&mut self, token: Token) {
+        if self.untok.is_some() {
+            fail!("can only unget one token at a time");
+        }
+
+        self.untok = Some(token);
+    }
+
+    pub fn peek_token(&mut self) -> Option<Token> {
+        let tok = self.get_token();
+        if tok.is_some() {
+            self.unget_token(tok.clone().unwrap());
+        }
+        tok
+    }
+}
+
+impl<R: Reader> Iterator<Token> for Tokenizer<R> {
+    fn next(&mut self) -> Option<Token> {
+        self.get_token()
     }
 }
 

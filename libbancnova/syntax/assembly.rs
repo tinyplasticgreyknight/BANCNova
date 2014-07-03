@@ -4,8 +4,11 @@ use syntax::bscode;
 use syntax::bscode::{Value, CellAddress, ToValue};
 use result::BancResult;
 use syntax::tokenize;
+use syntax::tokenize::{Tokenizer, Token, Name, IntegerLiteral, Comma, Newline, OpenBracket, CloseBracket, OperToken};
+use syntax::tree::{TreeNode};
 #[cfg(test)]
-use syntax::tree::Tree;
+use syntax::tree::{Tree};
+use std::num::{Zero, One};
 
 #[deriving(PartialEq,Eq)]
 pub enum Expression {
@@ -66,6 +69,14 @@ pub enum Instruction {
     Arithmetic(CellAddress, ArithTerm, ArithTerm, ArithTerm),
 }
 
+#[deriving(PartialEq,Eq,Show)]
+pub enum Argument {
+    ArgArith(ArithTerm),
+    ArgComp(Comparison),
+    ArgExpr(Expression),
+    ArgEmpty,
+}
+
 impl ToValue for Expression {
     fn as_value(&self) -> Value {
         match self {
@@ -88,12 +99,24 @@ impl Expression {
         }
     }
 
+
     pub fn parse_string(text: &str) -> BancResult<Expression> {
         let mut tokenizer = tokenize::from_str(text);
         let tok = tokenizer.next();
+
+        Expression::parse(tok, &mut tokenizer)
+    }
+
+    pub fn parse<R: Reader>(init_token: Option<Token>, tokenizer: &mut Tokenizer<R>) -> BancResult<Expression> {
+        let tok = match init_token {
+            Some(tk) => Some(tk),
+            None => tokenizer.next(),
+        };
+
         if tok.is_none() {
             return Err("read error");
         }
+
         match tok.unwrap() {
             tokenize::FencedLiteral('\'', s) => {
                 if s.len() == 1 {
@@ -206,6 +229,34 @@ impl ArithTerm {
         }
     }
 
+    fn parse<R: Reader>(init_token: Token, tokenizer: &mut Tokenizer<R>) -> BancResult<ArithTerm> {
+        let op = ArithOperator::parse_token(init_token);
+        let open_paren = tokenizer.get_token();
+        let subarg = Expression::parse(None, tokenizer);
+        let close_paren = tokenizer.get_token();
+        match open_paren {
+            Some(OpenBracket('(')) => {},
+            _ => { return Err("expected left parenthesis"); },
+        }
+        match close_paren {
+            Some(CloseBracket(')')) => {},
+            _ => { return Err("expected right parenthesis"); },
+        }
+
+        match (op, subarg) {
+            (Ok(op), Ok(expr)) => {
+                match expr {
+                    Cell(addr) => Ok(ArithCell(op, addr)),
+                    Immediate(val) => Ok(ArithImmediate(op, val)),
+                    ImmChar(_) => Err("don't know what to do with a character literal in this position"),
+                    Nothing => Err("no argument to arithterm?"),
+                }
+            },
+            (Ok(_), Err(e)) => Err(e),
+            (Err(e), _) => Err(e),
+        }
+    }
+
     fn effective(&self) -> bool {
         match self {
             &ArithCell(_, _) => true,
@@ -265,6 +316,25 @@ impl ArithOperator {
             _ => None
         }
     }
+
+    pub fn parse_token(token: Token) -> BancResult<ArithOperator> {
+        match token {
+            Name(s) => match s.as_slice() {
+                "LEN" => Ok(Length),
+                "SUB" => Ok(Subtract),
+                "ADD" => Ok(Add),
+                "MUL" => Ok(Multiply),
+                "DIV" => Ok(Divide),
+                "SUBSTR" => Ok(Substring),
+                "SYSTEM" => Ok(System),
+                "LOG" => Ok(Logarithm),
+                "TRUNC" => Ok(TruncateInt),
+                "DATE" => Ok(Date),
+                _ => Err("name is not a valid arith operator"),
+            },
+            _ => Err("token is not a valid arith operator"),
+        }
+    }
 }
 
 impl ToValue for ArithOperator {
@@ -322,6 +392,48 @@ impl Comparison {
             (Some(expr1), Some(op), _, Some(Nothing)) => Some(UnaryComparison(expr1, op)),
             (Some(expr1), _, Some(op), Some(expr2)) => Some(BinaryComparison(expr1, op, expr2)),
             _ => None,
+        }
+    }
+
+    pub fn parse<R: Reader>(tokenizer: &mut Tokenizer<R>) -> BancResult<Comparison> {
+        let tok = tokenizer.get_token();
+        match tok {
+            Some(Name(op)) => {
+                let lparen = tokenizer.get_token();
+                let expr = Expression::parse(None, tokenizer);
+                let rparen = tokenizer.get_token();
+                match (expr, lparen, rparen) {
+                    (Ok(expr), Some(OpenBracket('(')), Some(CloseBracket(')'))) => {
+                        match op.as_slice() {
+                            "ISNULL" => Ok(UnaryComparison(expr, IsNull)),
+                            "ISNOTNULL" => Ok(UnaryComparison(expr, IsNotNull)),
+                            _ => Err("not a valid unary comparator"),
+                        }
+                    },
+                    _ => Err("invalid unary condition syntax"),
+                }
+            },
+            Some(tok) => {
+                let expr1 = Expression::parse(Some(tok), tokenizer);
+                let op = tokenizer.get_token();
+                let expr2 = Expression::parse(None, tokenizer);
+                match (expr1, op, expr2) {
+                    (Ok(e1), Some(OperToken(op)), Ok(e2)) => {
+                        match op.as_slice() {
+                            "<=" => Ok(BinaryComparison(e1, LessOrEqual, e2)),
+                            "==" => Ok(BinaryComparison(e1, Equal, e2)),
+                            ">=" => Ok(BinaryComparison(e1, GreaterOrEqual, e2)),
+                            ">"  => Ok(BinaryComparison(e1, Greater, e2)),
+                            "!=" => Ok(BinaryComparison(e1, NotEqual, e2)),
+                            _ => {
+                                Err("not a valid binary comparator")
+                            },
+                        }
+                    },
+                    _ => Err("invalid condition syntax"),
+                }
+            },
+            None => Err("read error"),
         }
     }
 }
@@ -456,6 +568,201 @@ impl Instruction {
 
     pub fn render<W: Writer>(&self, buffer: &mut BufferedWriter<W>) {
         buffer.write_str(self.to_str().as_slice()).unwrap()
+    }
+
+    pub fn parse_noarg(name: String) -> BancResult<Instruction> {
+        match name.as_slice() {
+            "NEWPAGE" => Ok(NewPage),
+            "SAVEADDR" => Ok(SaveAddress),
+            "AUTOSAVE" => Ok(AutoSave),
+            "ENDCOND" => Ok(BlockEnd),
+            "ENDRCOND" => Ok(ReverseBlockEnd),
+            _ => Err("not a valid opcode"),
+        }
+    }
+
+    pub fn parse_cond(name: String, comp: Comparison) -> BancResult<Instruction> {
+        match name.as_slice() {
+            "COND" => Ok(SimpleConditional(comp)),
+            "STARTCOND" => Ok(BlockConditional(comp)),
+            "STARTRCOND" => Ok(ReverseBlockConditional(comp)),
+            _ => Err("not a valid conditional opcode"),
+        }
+    }
+
+    pub fn parse_raw(args: Vec<Argument>) -> BancResult<Instruction> {
+        if args.len() != 4 {
+            return Err("RAW statement must have exactly four arguments");
+        }
+        let mut vargs: Vec<Value> = vec!();
+        for expr in args.iter() {
+            match expr {
+                &ArgExpr(Immediate(v)) => vargs.push(v),
+                _ => { return Err("RAW statement must use explicit numeric arguments"); },
+            }
+        }
+        Ok(Unrecognised(
+                *vargs.get(0),
+                *vargs.get(1),
+                *vargs.get(2),
+                *vargs.get(3)
+        ))
+    }
+
+    pub fn parse_general(name: String, args: Vec<Argument>) -> BancResult<Instruction> {
+        if args.len() != 4 {
+            return Err("wrong number of arguments");
+        }
+        let targs = (args.get(0), args.get(1), args.get(2), args.get(3));
+        match name.as_slice() {
+            "SET" => {
+                let addr = match args.get(0) {
+                    &ArgExpr(Cell(addr)) => addr,
+                    _ => { return Err("SET must have an address for its first argument"); },
+                };
+                let mut arithargs: Vec<ArithTerm> = vec!();
+                for arg in args.tail().iter() {
+                    match arg {
+                        &ArgEmpty => arithargs.push(ArithImmediate(Add, One::one() )),
+                        &ArgArith(at) => arithargs.push(at),
+                        _ => { return Err("SET must have arithterms for arguments"); },
+                    }
+                }
+                Ok(Arithmetic(addr, *arithargs.get(0), *arithargs.get(1), *arithargs.get(2)))
+            },
+            "GOTO" => {
+                match targs {
+                    (&ArgExpr(Immediate(v)), &ArgEmpty, &ArgEmpty, &ArgEmpty) => {
+                        Ok(GotoPage(v))
+                    },
+                    _ => Err("GOTO takes only a single numeric argument"),
+                }
+            },
+            _ => Err("unrecognised name"),
+        }
+    }
+}
+
+fn consume_newline<R: Reader>(tokenizer: &mut Tokenizer<R>) -> BancResult<()> {
+    match tokenizer.get_token() {
+        Some(Newline) => Ok(()),
+        _ => Err("missing end-of-line"),
+    }
+}
+
+impl Argument {
+    pub fn parse<R: Reader>(init_token: Option<Token>, tokenizer: &mut Tokenizer<R>) -> BancResult<Argument> {
+        let tok = match init_token {
+            Some(tk) => Some(tk),
+            None => tokenizer.next(),
+        };
+        if tok.is_none() {
+            return Err("read error");
+        }
+
+        let tok = tok.unwrap();
+        match tok {
+            Name(_) => ArithTerm::parse(tok, tokenizer).map(|x| ArgArith(x) ),
+            a => Expression::parse(Some(a), tokenizer).map(|x| ArgExpr(x) ),
+        }
+    }
+}
+
+fn parse_argument<R: Reader>(tokenizer: &mut Tokenizer<R>) -> BancResult<Option<Argument>> {
+    let tok = tokenizer.get_token();
+    if tok.is_none() {
+        return Ok(None);
+    }
+    let tok = tok.unwrap();
+    match tok {
+        Comma => {
+            Ok(Some(ArgEmpty))
+        },
+        Newline => {
+            Ok(None)
+        },
+        tk => {
+            let result = match Argument::parse(Some(tk), tokenizer) {
+                Ok(arg) => Ok(Some(arg)),
+                Err(e) => Err(e),
+            };
+            let nexttok = tokenizer.get_token();
+            match nexttok {
+                Some(Comma) | None => {},
+                Some(Newline) => {
+                    tokenizer.unget_token(Newline);
+                },
+                _ => { return Err("expected comma/newline/eof after expression"); },
+            }
+            result
+        }
+    }
+}
+
+fn parse_arguments<R: Reader>(tokenizer: &mut Tokenizer<R>) -> BancResult<Vec<Argument>> {
+    let mut args = vec!();
+    loop {
+        match parse_argument(tokenizer) {
+            Ok(Some(arg)) => args.push(arg),
+            Ok(None) => { break; }
+            Err(e) => { return Err(e); }
+        }
+    }
+    if args.len() > 4 {
+        return Err("too many arguments");
+    }
+    while args.len() < 4 {
+        args.push(ArgEmpty);
+    }
+    Ok(args)
+}
+
+impl TreeNode for Instruction {
+    fn parse<R: Reader>(tokenizer: &mut Tokenizer<R>) -> BancResult<Option<Instruction>> {
+        let token = tokenizer.next();
+        if token.is_none() {
+            return Ok(None);
+        }
+        let rinst = match token.unwrap() {
+            Name(name) => match name.as_slice() {
+                "COND" | "STARTCOND" | "STARTRCOND" => {
+                    match Comparison::parse(tokenizer) {
+                        Ok(comp) => {
+                            match consume_newline(tokenizer) {
+                                Ok(_) => Instruction::parse_cond(name, comp),
+                                Err(e) => Err(e),
+                            }
+                        },
+                        Err(e) => Err(e),
+                    }
+                },
+                "NEWPAGE" | "ENDCOND" | "ENDRCOND" | "SAVEADDR" | "AUTOSAVE" => {
+                    match consume_newline(tokenizer) {
+                        Ok(_) => Instruction::parse_noarg(name),
+                        Err(e) => Err(e),
+                    }
+                },
+                "RAW" => {
+                    match parse_arguments(tokenizer) {
+                        Ok(args) => Instruction::parse_raw(args),
+                        Err(e) => Err(e),
+                    }
+                },
+                _ => {
+                    match parse_arguments(tokenizer) {
+                        Ok(args) => Instruction::parse_general(name, args),
+                        Err(e) => Err(e),
+                    }
+                },
+            },
+            _ => {
+                Err("unexpected name as first token on line")
+            }
+        };
+        return match rinst {
+            Ok(a) => Ok(Some(a)),
+            Err(e) => Err(e),
+        };
     }
 }
 

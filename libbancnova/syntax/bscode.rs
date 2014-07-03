@@ -8,6 +8,7 @@ use syntax::tokenize::{Tokenizer, Newline, IntegerLiteral, Comma};
 use std::io::{File};
 #[cfg(test)]
 use syntax::tree::Tree;
+use std::num::{Zero, One};
 
 
 #[deriving(PartialEq,Eq)]
@@ -96,12 +97,23 @@ impl Value {
         }
     }
 
-    pub fn is_zero(&self) -> bool {
-        self.x == 0
-    }
-
     pub fn as_i16(&self) -> i16 {
         self.x
+    }
+}
+
+impl Zero for Value {
+    fn zero() -> Value {
+        Value::new(0)
+    }
+    fn is_zero(&self) -> bool {
+        self.x == 0
+    }
+}
+
+impl One for Value {
+    fn one() -> Value {
+        Value::new(1)
     }
 }
 

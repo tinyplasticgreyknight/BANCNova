@@ -1,11 +1,9 @@
 BINDIR=bin
 LIBSRCDIR=libbancnova
-ASMSRCDIR=assemble
-DISSRCDIR=disassemble
+EXESRCDIR=programs
 
 LIBSOURCES=$(shell find $(LIBSRCDIR) -iname '*.rs')
-ASMSOURCES=$(shell find $(ASMSRCDIR) -iname '*.rs')
-DISSOURCES=$(shell find $(DISSRCDIR) -iname '*.rs')
+UTILSOURCES=$(shell find $(EXESRCDIR)/util -iname '*.rs')
 
 TESTNAME=$(BINDIR)/test-harness
 
@@ -18,11 +16,11 @@ all: library assembler disassembler
 library: $(LIBSOURCES)
 	$(RUSTC) $(RFLAGS) $(LIBSRCDIR)/lib.rs
 
-assembler: $(ASMSOURCES)
-	$(RUSTC) $(RFLAGS) $(ASMSRCDIR)/bin.rs
+assembler: $(EXESRCDIR)/assemble.rs $(UTILSOURCES)
+	$(RUSTC) $(RFLAGS) $<
 
-disassembler: $(DISSOURCES)
-	$(RUSTC) $(RFLAGS) $(DISSRCDIR)/bin.rs
+disassembler: $(EXESRCDIR)/disassemble.rs $(UTILSOURCES)
+	$(RUSTC) $(RFLAGS) $<
 
 test: $(TESTNAME)
 	$(TESTNAME)
