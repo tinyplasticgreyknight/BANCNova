@@ -71,6 +71,7 @@ pub enum Instruction {
     ReverseBlockEnd,
     SaveAddress,
     GotoPage(Value),
+    AutoSolve,
     AutoSave,
     Arithmetic(CellAddress, ArithTerm, ArithTerm, ArithTerm),
     ShowPrompt(CellAddress, Position, Value, Position),
@@ -603,6 +604,7 @@ impl Instruction {
             },
             8400 if all_args_zero => SaveAddress,
             8500 if a.is_zero() && c.is_zero() => GotoPage(b),
+            8700 if all_args_zero => AutoSolve,
             9001 if all_args_zero => AutoSave,
             10000..11999 => match arithmetic_from_bscode(opcode.as_value(), a, b, c) {
                 Some(a) => a,
@@ -621,6 +623,7 @@ impl Instruction {
             &Window(clr, p1, p2) => bscode::Instruction::new(8000, clr, p1.as_packed(), p2.as_packed()),
             &SaveAddress => bscode::Instruction::new(8400,0,0,0),
             &GotoPage(n) => bscode::Instruction::new(8500,0,n,0),
+            &AutoSolve => bscode::Instruction::new(8700,0,0,0),
             &AutoSave => bscode::Instruction::new(9001,0,0,0),
             &Arithmetic(addr, t1, t2, t3) => bscode::Instruction::new(addr+10000,t1,t2,t3),
             &Unrecognised(a,b,c,d) => bscode::Instruction::new(a,b,c,d),
@@ -636,6 +639,7 @@ impl Instruction {
         match name.as_slice() {
             "NEWPAGE" => Ok(NewPage),
             "SAVEADDR" => Ok(SaveAddress),
+            "AUTOSOLVE" => Ok(AutoSolve),
             "AUTOSAVE" => Ok(AutoSave),
             "ENDCOND" => Ok(BlockEnd),
             "ENDRCOND" => Ok(ReverseBlockEnd),
@@ -841,7 +845,7 @@ impl TreeNode for Instruction {
                         Err(e) => Err(e),
                     }
                 },
-                "NEWPAGE" | "ENDCOND" | "ENDRCOND" | "SAVEADDR" | "AUTOSAVE" => {
+                "NEWPAGE" | "ENDCOND" | "ENDRCOND" | "SAVEADDR" | "AUTOSAVE" | "AUTOSOLVE" => {
                     match consume_newline(tokenizer) {
                         Ok(_) => Instruction::parse_noarg(name),
                         Err(e) => Err(e),
@@ -944,6 +948,9 @@ impl Show for Instruction {
             },
             &SaveAddress => {
                 "SAVEADDR".fmt(formatter)
+            },
+            &AutoSolve => {
+                "AUTOSOLVE".fmt(formatter)
             },
             &AutoSave => {
                 "AUTOSAVE".fmt(formatter)
