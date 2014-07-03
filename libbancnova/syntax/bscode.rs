@@ -152,9 +152,13 @@ impl Instruction {
     }
 
     pub fn parse_vec(elements: &mut Vec<String>) -> BancResult<Option<Instruction>> {
-        if elements.len() != 4 {
-            return Ok(None);
+        match elements.len() {
+            0 => { return Ok(None); },
+            1|2|3 => { return Err("not enough arguments"); },
+            4 => {},
+            _ => { return Err("too many arguments"); },
         }
+
         let inst = Instruction::parse_elem(elements.get(0).clone(), elements.get(1).clone(), elements.get(2).clone(), elements.get(3).clone());
         elements.truncate(0);
         match inst {

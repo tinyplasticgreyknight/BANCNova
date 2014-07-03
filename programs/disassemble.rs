@@ -20,6 +20,7 @@ fn main() {
             if err.detail.is_some() {
                 println!("\t{}", err.detail.unwrap());
             }
+            os::set_exit_status(-1);
         },
         _ => {},
     }

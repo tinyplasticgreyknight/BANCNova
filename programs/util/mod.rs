@@ -44,3 +44,8 @@ pub fn make_ioerr<T, R: Reader>(message: &'static str, tokenizer: &Tokenizer<R>)
     let detail = format!("on line {}", tokenizer.current_line());
     Err(IoError{ kind: OtherIoError, desc: message, detail: Some(detail)})
 }
+
+#[allow(dead_code)]
+pub fn make_ioerr_noline<T>(message: &'static str) -> IoResult<T> {
+    Err(IoError{ kind: OtherIoError, desc: message, detail: None})
+}
