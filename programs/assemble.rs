@@ -13,9 +13,11 @@ mod util;
 
 fn main() {
     let args = os::args();
-    match assemble_file(args.get(1).as_slice(), args.get(2).as_slice()) {
+    let infilename = args.get(1).as_slice();
+    let outfilename = args.get(2).as_slice();
+    match assemble_file(infilename, outfilename) {
         Err(err) => {
-            println!("error: [{}] {}", err.kind, err.desc);
+            println!("[{}] {}", err.kind, err.desc);
             if err.detail.is_some() {
                 println!("\t{}", err.detail.unwrap());
             }
@@ -25,7 +27,12 @@ fn main() {
 }
 
 fn assemble<R: Reader>(tokenizer: &mut Tokenizer<R>, writer: &mut Writer) -> IoResult<()> {
-    let asmtree: Tree<assembly::Instruction> = Tree::parse(tokenizer).unwrap();
+    let asmtree = Tree::parse(tokenizer);
+    let asmtree: Tree<assembly::Instruction> =
+    match asmtree {
+        Ok(tree) => tree,
+        Err(s) => { return util::make_ioerr(s, tokenizer); },
+    };
     for asminst in asmtree.iter() {
         let bsinst = asminst.as_bscode();
         match writer.write_line(bsinst.to_str().as_slice()) {

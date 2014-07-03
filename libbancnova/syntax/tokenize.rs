@@ -20,6 +20,7 @@ pub struct Tokenizer<R> {
     breader: Box<BufferedReader<R>>,
     ungotch: Option<char>,
     untok: Option<Token>,
+    line: uint,
 }
 
 fn escape_character(e: char) -> char {
@@ -33,7 +34,7 @@ fn escape_character(e: char) -> char {
 impl<R: Reader> Tokenizer<R> {
     pub fn from_file(file: File) -> Tokenizer<File> {
         let breader = BufferedReader::new(file);
-        Tokenizer { breader: box breader, ungotch: None, untok: None }
+        Tokenizer { breader: box breader, ungotch: None, untok: None, line: 1 }
     }
 
     pub fn from_str<'a>(text: &'a str) -> Tokenizer<BufReader<'a>> {
@@ -43,7 +44,7 @@ impl<R: Reader> Tokenizer<R> {
 
     pub fn from_buf<'a>(sreader: BufReader<'a>) -> Tokenizer<BufReader<'a>> {
         let breader = BufferedReader::new(sreader);
-        Tokenizer { breader: box breader, ungotch: None, untok: None }
+        Tokenizer { breader: box breader, ungotch: None, untok: None, line: 1 }
     }
 
     pub fn vectorize(subject: &str) -> Vec<Token> {
@@ -184,6 +185,9 @@ impl<R: Reader> Tokenizer<R> {
         match self.untok.clone() {
             Some(tk) => {
                 self.untok = None;
+                if tk == Newline {
+                    self.line += 1;
+                }
                 return Some(tk);
             },
             None => {},
@@ -199,7 +203,10 @@ impl<R: Reader> Tokenizer<R> {
             '\'' => self.read_fenced_literal(c),
             ',' => Some(Comma),
             ' '|'\t' => self.next(),
-            '\n' => Some(Newline),
+            '\n' => {
+                self.line += 1;
+                Some(Newline)
+            },
             '@' => Some(AddressSign),
             'a'..'z' => self.read_name(c),
             'A'..'Z' => self.read_name(c),
@@ -215,6 +222,9 @@ impl<R: Reader> Tokenizer<R> {
         if self.untok.is_some() {
             fail!("can only unget one token at a time");
         }
+        if token == Newline {
+            self.line -= 1;
+        }
 
         self.untok = Some(token);
     }
@@ -225,6 +235,10 @@ impl<R: Reader> Tokenizer<R> {
             self.unget_token(tok.clone().unwrap());
         }
         tok
+    }
+
+    pub fn current_line(&self) -> uint {
+        self.line
     }
 }
 

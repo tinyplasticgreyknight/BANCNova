@@ -1,4 +1,6 @@
-use std::io::{File, IoResult, IoError, FileMode, FileAccess, Read, Truncate, Write, Open};
+use bancnova::syntax::tokenize::Tokenizer;
+use std::io::{IoResult, IoError, OtherIoError};
+use std::io::{File, FileMode, FileAccess, Read, Truncate, Write, Open};
 
 #[allow(dead_code)]
 pub fn open(filename: &str, mode: FileMode, access: FileAccess) -> IoResult<File> {
@@ -35,4 +37,10 @@ pub fn open_io_files(infilename: &str, outfilename: &str) -> IoResult<(File, Fil
         (Err(e), Ok(_)) => Err(e),
         (_, Err(e)) => Err(e),
     }
+}
+
+#[allow(dead_code)]
+pub fn make_ioerr<T, R: Reader>(message: &'static str, tokenizer: &Tokenizer<R>) -> IoResult<T> {
+    let detail = format!("on line {}", tokenizer.current_line());
+    Err(IoError{ kind: OtherIoError, desc: message, detail: Some(detail)})
 }

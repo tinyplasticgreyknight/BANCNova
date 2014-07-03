@@ -3,6 +3,7 @@
 
 extern crate bancnova;
 use std::os;
+use bancnova::syntax::bscode;
 use bancnova::syntax::assembly;
 use bancnova::syntax::tokenize;
 use bancnova::syntax::tokenize::Tokenizer;
@@ -25,7 +26,12 @@ fn main() {
 }
 
 fn disassemble<R: Reader>(tokenizer: &mut Tokenizer<R>, writer: &mut Writer) -> IoResult<()> {
-    let bstree = Tree::parse(tokenizer).unwrap();
+    let bstree = Tree::parse(tokenizer);
+    let bstree: Tree<bscode::Instruction> =
+    match bstree {
+        Ok(tree) => tree,
+        Err(s) => { return util::make_ioerr(s, tokenizer); },
+    };
     for bsinst in bstree.iter() {
         let inst = assembly::Instruction::from_bscode(bsinst);
         match writer.write_line(inst.to_str().as_slice()) {
