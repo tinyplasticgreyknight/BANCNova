@@ -124,6 +124,20 @@ impl One for Value {
     }
 }
 
+impl ToPrimitive for Value {
+    fn to_i64(&self) -> Option<i64> {
+        Some(self.as_i16() as i64)
+    }
+    fn to_u64(&self) -> Option<u64> {
+        let i = self.as_i16();
+        if i < 0 {
+            None
+        } else {
+            Some(i as u64)
+        }
+    }
+}
+
 impl Show for Value {
     fn fmt(&self, formatter: &mut Formatter) -> Result<(), FormatError> {
         let wres = if self.x == 0 {

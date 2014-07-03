@@ -76,6 +76,7 @@ pub enum Instruction {
     SimpleConditional(Comparison),
     BlockConditional(Comparison),
     BlockEnd,
+    ReverseSimpleConditional(Comparison),
     ReverseBlockConditional(Comparison),
     ReverseBlockEnd,
     SaveAddress,
@@ -84,6 +85,7 @@ pub enum Instruction {
     GotoFKey(Value),
     GotoTransaction(Value),
     GotoSpecial(GotoSpecialTarget),
+    SystemCall(CellAddress),
     AutoSolve,
     AutoSave,
     Arithmetic(CellAddress, ArithTerm, ArithTerm, ArithTerm),
@@ -549,6 +551,7 @@ fn conditional_as_bscode(inst: &Instruction) -> Option<bscode::Instruction> {
     let (opcode, comparison) = match inst {
         &SimpleConditional(comp) => (Some(3000), Some(comp)),
         &BlockConditional(comp) => (Some(3001), Some(comp)),
+        &ReverseSimpleConditional(comp) => (Some(3100), Some(comp)),
         &ReverseBlockConditional(comp) => (Some(3101), Some(comp)),
         _ => (None, None),
     };
@@ -589,9 +592,9 @@ impl Instruction {
                 ShowPrompt(CellAddress::new(opcode), p1, r, p2)
             },
             2999 if all_args_zero => NewPage,
-            3000|3001|3101 => {
+            3000|3001|3100|3101 => {
                 let ocomp = Comparison::from_bscode(a, b, c);
-                if all_args_zero && opcode != 3000 {
+                if all_args_zero && (opcode==3001 || opcode==3101) {
                     if opcode == 3001 {
                         BlockEnd
                     } else {
@@ -602,6 +605,8 @@ impl Instruction {
                         SimpleConditional(ocomp.unwrap())
                     } else if opcode == 3001 {
                         BlockConditional(ocomp.unwrap())
+                    } else if opcode == 3100 {
+                        ReverseSimpleConditional(ocomp.unwrap())
                     } else {
                         ReverseBlockConditional(ocomp.unwrap())
                     }
@@ -630,6 +635,7 @@ impl Instruction {
                     _ => Unrecognised(opcode.as_value(), a, b, c),
                 }
             },
+            8560 => SystemCall(CellAddress::new(c)),
             8700 if all_args_zero => AutoSolve,
             9001 if all_args_zero => AutoSave,
             10000..11999 => match arithmetic_from_bscode(opcode.as_value(), a, b, c) {
@@ -657,6 +663,7 @@ impl Instruction {
             &GotoSpecial(ExitSystem) => bscode::Instruction::new(8500,0,(4000+'E' as int).as_value(),0),
             &GotoSpecial(Storage) => bscode::Instruction::new(8500,0,(4000+'S' as int).as_value(),0),
             &GotoSpecial(MultitaskMenu) => bscode::Instruction::new(8500,0,(4000+'T'as int).as_value(),0),
+            &SystemCall(addr) => bscode::Instruction::new(8560,0,0,addr.as_value()),
             &AutoSolve => bscode::Instruction::new(8700,0,0,0),
             &AutoSave => bscode::Instruction::new(9001,0,0,0),
             &Arithmetic(addr, t1, t2, t3) => bscode::Instruction::new(addr+10000,t1,t2,t3),
@@ -689,6 +696,7 @@ impl Instruction {
     pub fn parse_cond(name: String, comp: Comparison) -> BancResult<Instruction> {
         match name.as_slice() {
             "COND" => Ok(SimpleConditional(comp)),
+            "RCOND" => Ok(ReverseSimpleConditional(comp)),
             "STARTCOND" => Ok(BlockConditional(comp)),
             "STARTRCOND" => Ok(ReverseBlockConditional(comp)),
             _ => Err("not a valid conditional opcode"),
@@ -814,11 +822,14 @@ impl Instruction {
                     _ => Err("GOTOTR takes only a single numeric argument"),
                 }
             },
-            "MAINMENU" => Ok(GotoSpecial(MainMenu)),
-            "MTASKMENU" => Ok(GotoSpecial(MultitaskMenu)),
-            "GOSTORAGE" => Ok(GotoSpecial(Storage)),
-            "GOPRODUCT" => Ok(GotoSpecial(ProductSales)),
-            "EXIT" => Ok(GotoSpecial(ExitSystem)),
+            "SYSCALL" => {
+                match args.get(0) {
+                    &ArgExpr(Cell(addr)) => {
+                        Ok(SystemCall(addr))
+                    },
+                    _ => Err("SYSCALL needs a cell argument"),
+                }
+            },
             _ => Err("unrecognised name"),
         }
     }
@@ -906,7 +917,7 @@ impl TreeNode for Instruction {
         }
         let rinst = match token.unwrap() {
             Name(name) => match name.as_slice() {
-                "COND" | "STARTCOND" | "STARTRCOND" => {
+                "RCOND" | "COND" | "STARTCOND" | "STARTRCOND" => {
                     match Comparison::parse(tokenizer) {
                         Ok(comp) => {
                             match consume_newline(tokenizer) {
@@ -1033,6 +1044,11 @@ impl Show for Instruction {
                 formatter.write_char(' ');
                 cmp.fmt(formatter)
             },
+            &ReverseSimpleConditional(cmp) => {
+                "RCOND".fmt(formatter);
+                formatter.write_char(' ');
+                cmp.fmt(formatter)
+            },
             &BlockConditional(cmp) => {
                 "STARTCOND".fmt(formatter);
                 formatter.write_char(' ');
@@ -1075,6 +1091,11 @@ impl Show for Instruction {
             &GotoSpecial(ProductSales) => "GOPRODUCT".fmt(formatter),
             &GotoSpecial(Storage) => "GOSTORAGE".fmt(formatter),
             &GotoSpecial(ExitSystem) => "EXIT".fmt(formatter),
+            &SystemCall(addr) => {
+                "SYSCALL".fmt(formatter);
+                formatter.write_char(' ');
+                addr.fmt(formatter)
+            },
             &Unrecognised(v0, v1, v2, v3) => {
                 "RAW".fmt(formatter);
                 formatter.write_char(' ');
