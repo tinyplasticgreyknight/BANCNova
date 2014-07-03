@@ -246,6 +246,7 @@ impl Show for Position {
 impl AddressOrValue {
     fn parse(v: Value) -> Option<AddressOrValue> {
         match v.as_i16() {
+            0 => Some(EValue(Zero::zero())),
             1..2000 => Some(EAddress(CellAddress::new(v))),
             10000..19999 => Some(EValue(Value::new(v - 10000))),
             _ => None,
@@ -267,7 +268,12 @@ impl ToValue for AddressOrValue {
     fn as_value(&self) -> Value {
         match self {
             &EAddress(addr) => addr.as_value(),
-            &EValue(v) => v+10000,
+            &EValue(v) =>
+                if v.is_zero() {
+                    v
+                } else {
+                    v+10000
+                },
         }
     }
 }
@@ -743,7 +749,7 @@ impl Instruction {
                 // is it really a numeric literal?  not convinced
                 match (DataModelField::new(a), AddressOrValue::parse(b), AddressOrValue::parse(c)) {
                     (Some(field), Some(addr1), Some(addr2)) => match opcode {
-                        9200|2301 => DataPut(flag, field, addr1, addr2),
+                        9200|2301 => DataRun(flag, field, addr1, addr2),
                         9300|9301 => DataPut(flag, field, addr1, addr2),
                         9400|9401 => DataGet(flag, field, addr1, addr2),
                         _ => give_up,
