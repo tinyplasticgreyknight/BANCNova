@@ -11,15 +11,12 @@ RUSTC=rustc
 RFLAGS=-L $(BINDIR) --out-dir $(BINDIR)
 TFLAGS=--test --crate-type=bin
 
-all: library assembler disassembler
+all: library bin/assemble bin/disassemble bin/compare
 
 library: $(LIBSOURCES)
 	$(RUSTC) $(RFLAGS) $(LIBSRCDIR)/lib.rs
 
-assembler: $(EXESRCDIR)/assemble.rs $(UTILSOURCES)
-	$(RUSTC) $(RFLAGS) $<
-
-disassembler: $(EXESRCDIR)/disassemble.rs $(UTILSOURCES)
+bin/%: $(EXESRCDIR)/%.rs $(UTILSOURCES)
 	$(RUSTC) $(RFLAGS) $<
 
 test: $(TESTNAME)

@@ -8,7 +8,7 @@ use syntax::tokenize::{Tokenizer, Token, Name, IntegerLiteral, Comma, Newline, O
 use syntax::tree::{TreeNode};
 #[cfg(test)]
 use syntax::tree::{Tree};
-use std::num::{Zero, One};
+use std::num::Zero;
 
 #[deriving(PartialEq,Eq)]
 pub enum Expression {
@@ -92,9 +92,9 @@ impl Expression {
     pub fn from_bscode(expr: Value) -> Option<Expression> {
         match expr.as_i16() {
             0 => Some(Nothing),
-            10000..29999 => Some(Immediate(expr)),
-            30000..30255 => Some(ImmChar((expr + (-30000)).as_i16() as u8 as char)),
-            1..2000 => Some(Cell(CellAddress::new(expr.as_i16()))),
+            r@ 10000..29999 => Some(Immediate(Value::new(r-10000))),
+            r@30000..30255 => Some(ImmChar((r-30000) as u8 as char)),
+            r@1..2000 => Some(Cell(CellAddress::new(r))),
             _ => None,
         }
     }
@@ -560,7 +560,7 @@ impl Instruction {
             &SaveAddress => bscode::Instruction::new(8400,0,0,0),
             &GotoPage(n) => bscode::Instruction::new(8500,0,n,0),
             &AutoSave => bscode::Instruction::new(9001,0,0,0),
-            &Arithmetic(addr, t1, t2, t3) => bscode::Instruction::new(addr+10000,t1,t2,t3),//(addr + 10000).as_value(),
+            &Arithmetic(addr, t1, t2, t3) => bscode::Instruction::new(addr+10000,t1,t2,t3),
             &Unrecognised(a,b,c,d) => bscode::Instruction::new(a,b,c,d),
             x => conditional_as_bscode(x).unwrap(),
         }
@@ -623,7 +623,7 @@ impl Instruction {
                 let mut arithargs: Vec<ArithTerm> = vec!();
                 for arg in args.tail().iter() {
                     match arg {
-                        &ArgEmpty => arithargs.push(ArithImmediate(Add, One::one() )),
+                        &ArgEmpty => arithargs.push(ArithImmediate(Add, Zero::zero() )),
                         &ArgArith(at) => arithargs.push(at),
                         _ => { return Err("SET must have arithterms for arguments"); },
                     }

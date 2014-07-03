@@ -1,5 +1,6 @@
 use std::io::{File, IoResult, IoError, FileMode, FileAccess, Read, Truncate, Write, Open};
 
+#[allow(dead_code)]
 pub fn open(filename: &str, mode: FileMode, access: FileAccess) -> IoResult<File> {
     match File::open_mode(&Path::new(filename), mode, access) {
         Ok(f) => {
@@ -15,14 +16,17 @@ pub fn open(filename: &str, mode: FileMode, access: FileAccess) -> IoResult<File
     }
 }
 
+#[allow(dead_code)]
 pub fn open_input(filename: &str) -> IoResult<File> {
     open(filename, Open, Read)
 }
 
+#[allow(dead_code)]
 pub fn open_output(filename: &str) -> IoResult<File> {
     open(filename, Truncate, Write)
 }
 
+#[allow(dead_code)]
 pub fn open_io_files(infilename: &str, outfilename: &str) -> IoResult<(File, File)> {
     let infile  = open_input(infilename);
     let outfile = open_output(outfilename);
