@@ -60,6 +60,15 @@ pub struct Position {
     y: Value,
 }
 
+#[deriving(PartialEq,Eq,Show)]
+pub enum GotoSpecialTarget {
+    ProductSales,
+    MainMenu,
+    ExitSystem,
+    Storage,
+    MultitaskMenu,
+}
+
 #[deriving(PartialEq,Eq)]
 pub enum Instruction {
     Unrecognised(Value, Value, Value, Value),
@@ -74,6 +83,7 @@ pub enum Instruction {
     GotoPrompt(CellAddress),
     GotoFKey(Value),
     GotoTransaction(Value),
+    GotoSpecial(GotoSpecialTarget),
     AutoSolve,
     AutoSave,
     Arithmetic(CellAddress, ArithTerm, ArithTerm, ArithTerm),
@@ -612,6 +622,11 @@ impl Instruction {
                     501..520 => GotoFKey(b - 500),
                     1001..3000 => GotoPage(b - 1000),
                     4001..4024 => GotoTransaction(b - 4000),
+                    4080 => GotoSpecial(ProductSales),
+                    4077 => GotoSpecial(MainMenu),
+                    4069 => GotoSpecial(ExitSystem),
+                    4083 => GotoSpecial(Storage),
+                    4084 => GotoSpecial(MultitaskMenu),
                     _ => Unrecognised(opcode.as_value(), a, b, c),
                 }
             },
@@ -637,6 +652,11 @@ impl Instruction {
             &GotoFKey(f) => bscode::Instruction::new(8500,0,f+500,0),
             &GotoPrompt(addr) => bscode::Instruction::new(8500,0,addr.as_value()+1000,0),
             &GotoTransaction(t) => bscode::Instruction::new(8500,0,t+4000,0),
+            &GotoSpecial(MainMenu) => bscode::Instruction::new(8500,0,(4000+'M' as int).as_value(),0),
+            &GotoSpecial(ProductSales) => bscode::Instruction::new(8500,0,(4000+'P' as int).as_value(),0),
+            &GotoSpecial(ExitSystem) => bscode::Instruction::new(8500,0,(4000+'E' as int).as_value(),0),
+            &GotoSpecial(Storage) => bscode::Instruction::new(8500,0,(4000+'S' as int).as_value(),0),
+            &GotoSpecial(MultitaskMenu) => bscode::Instruction::new(8500,0,(4000+'T'as int).as_value(),0),
             &AutoSolve => bscode::Instruction::new(8700,0,0,0),
             &AutoSave => bscode::Instruction::new(9001,0,0,0),
             &Arithmetic(addr, t1, t2, t3) => bscode::Instruction::new(addr+10000,t1,t2,t3),
@@ -657,6 +677,11 @@ impl Instruction {
             "AUTOSAVE" => Ok(AutoSave),
             "ENDCOND" => Ok(BlockEnd),
             "ENDRCOND" => Ok(ReverseBlockEnd),
+            "EXIT" => Ok(GotoSpecial(ExitSystem)),
+            "MAINMENU" => Ok(GotoSpecial(MainMenu)),
+            "MTASKMENU" => Ok(GotoSpecial(MultitaskMenu)),
+            "GOSTORAGE" => Ok(GotoSpecial(Storage)),
+            "GOPRODUCT" => Ok(GotoSpecial(ProductSales)),
             _ => Err("not a valid opcode"),
         }
     }
@@ -764,10 +789,7 @@ impl Instruction {
                     (&ArgExpr(Cell(addr)), &ArgEmpty, &ArgEmpty, &ArgEmpty) => {
                         Ok(GotoPrompt(addr))
                     },
-                    _ => {
-                        println!("[{}]", targs);
-                        Err("GOTO takes only a single argument (number or cell)")
-                    },
+                    _ => Err("GOTO takes only a single argument (number or cell)"),
                 }
             },
             "GOTOF" => {
@@ -792,6 +814,11 @@ impl Instruction {
                     _ => Err("GOTOTR takes only a single numeric argument"),
                 }
             },
+            "MAINMENU" => Ok(GotoSpecial(MainMenu)),
+            "MTASKMENU" => Ok(GotoSpecial(MultitaskMenu)),
+            "GOSTORAGE" => Ok(GotoSpecial(Storage)),
+            "GOPRODUCT" => Ok(GotoSpecial(ProductSales)),
+            "EXIT" => Ok(GotoSpecial(ExitSystem)),
             _ => Err("unrecognised name"),
         }
     }
@@ -890,12 +917,6 @@ impl TreeNode for Instruction {
                         Err(e) => Err(e),
                     }
                 },
-                "NEWPAGE" | "ENDCOND" | "ENDRCOND" | "SAVEADDR" | "AUTOSAVE" | "AUTOSOLVE" => {
-                    match consume_newline(tokenizer) {
-                        Ok(_) => Instruction::parse_noarg(name),
-                        Err(e) => Err(e),
-                    }
-                },
                 "RAW" => {
                     match parse_arguments(tokenizer) {
                         Ok(args) => Instruction::parse_raw(args),
@@ -904,7 +925,14 @@ impl TreeNode for Instruction {
                 },
                 _ => {
                     match parse_arguments(tokenizer) {
-                        Ok(args) => Instruction::parse_general(name, args),
+                        Ok(args) => {
+                            let count = args.iter().count(|a| a != &ArgEmpty);
+                            if count == 0 {
+                                Instruction::parse_noarg(name)
+                            } else {
+                                Instruction::parse_general(name, args)
+                            }
+                        },
                         Err(e) => Err(e),
                     }
                 },
@@ -1042,6 +1070,11 @@ impl Show for Instruction {
                 formatter.write_char(' ');
                 v.fmt(formatter)
             },
+            &GotoSpecial(MainMenu) => "MAINMENU".fmt(formatter),
+            &GotoSpecial(MultitaskMenu) => "MTASKMENU".fmt(formatter),
+            &GotoSpecial(ProductSales) => "GOPRODUCT".fmt(formatter),
+            &GotoSpecial(Storage) => "GOSTORAGE".fmt(formatter),
+            &GotoSpecial(ExitSystem) => "EXIT".fmt(formatter),
             &Unrecognised(v0, v1, v2, v3) => {
                 "RAW".fmt(formatter);
                 formatter.write_char(' ');
