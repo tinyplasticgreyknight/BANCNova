@@ -60,6 +60,13 @@ impl<B: ToValue> Add<B, Value> for Value {
     }
 }
 
+impl<B: ToValue> Sub<B, Value> for Value {
+    fn sub(&self, b: &B) -> Value {
+        let b = b.as_value();
+        Value { x: (self.x - b.x) }
+    }
+}
+
 impl<B: ToValue> Mul<B, Value> for Value {
     fn mul(&self, b: &B) -> Value {
         let b = b.as_value();

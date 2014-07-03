@@ -71,6 +71,9 @@ pub enum Instruction {
     ReverseBlockEnd,
     SaveAddress,
     GotoPage(Value),
+    GotoPrompt(CellAddress),
+    GotoFKey(Value),
+    GotoTransaction(Value),
     AutoSolve,
     AutoSave,
     Arithmetic(CellAddress, ArithTerm, ArithTerm, ArithTerm),
@@ -603,7 +606,15 @@ impl Instruction {
                 Window(clrpair, p1, p2)
             },
             8400 if all_args_zero => SaveAddress,
-            8500 if a.is_zero() && c.is_zero() => GotoPage(b),
+            8500 if a.is_zero() && c.is_zero() => {
+                match b.as_i16() {
+                    0..500 => GotoPage(b),
+                    501..520 => GotoFKey(b - 500),
+                    1001..3000 => GotoPage(b - 1000),
+                    4001..4024 => GotoTransaction(b - 4000),
+                    _ => Unrecognised(opcode.as_value(), a, b, c),
+                }
+            },
             8700 if all_args_zero => AutoSolve,
             9001 if all_args_zero => AutoSave,
             10000..11999 => match arithmetic_from_bscode(opcode.as_value(), a, b, c) {
@@ -623,6 +634,9 @@ impl Instruction {
             &Window(clr, p1, p2) => bscode::Instruction::new(8000, clr, p1.as_packed(), p2.as_packed()),
             &SaveAddress => bscode::Instruction::new(8400,0,0,0),
             &GotoPage(n) => bscode::Instruction::new(8500,0,n,0),
+            &GotoFKey(f) => bscode::Instruction::new(8500,0,f+500,0),
+            &GotoPrompt(addr) => bscode::Instruction::new(8500,0,addr.as_value()+1000,0),
+            &GotoTransaction(t) => bscode::Instruction::new(8500,0,t+4000,0),
             &AutoSolve => bscode::Instruction::new(8700,0,0,0),
             &AutoSave => bscode::Instruction::new(9001,0,0,0),
             &Arithmetic(addr, t1, t2, t3) => bscode::Instruction::new(addr+10000,t1,t2,t3),
@@ -742,9 +756,40 @@ impl Instruction {
             "GOTO" => {
                 match targs {
                     (&ArgExpr(Immediate(v)), &ArgEmpty, &ArgEmpty, &ArgEmpty) => {
-                        Ok(GotoPage(v))
+                        match v.as_i16() {
+                            0..500 => Ok(GotoPage(v)),
+                            _ => Err("GOTO can only go to pages up to 500"),
+                        }
                     },
-                    _ => Err("GOTO takes only a single numeric argument"),
+                    (&ArgExpr(Cell(addr)), &ArgEmpty, &ArgEmpty, &ArgEmpty) => {
+                        Ok(GotoPrompt(addr))
+                    },
+                    _ => {
+                        println!("[{}]", targs);
+                        Err("GOTO takes only a single argument (number or cell)")
+                    },
+                }
+            },
+            "GOTOF" => {
+                match targs {
+                    (&ArgExpr(Immediate(v)), &ArgEmpty, &ArgEmpty, &ArgEmpty) => {
+                        match v.as_i16() {
+                            1..20 => Ok(GotoFKey(v)),
+                            _ => Err("GOTOF argument must be in [1, 20]"),
+                        }
+                    },
+                    _ => Err("GOTOF takes only a single numeric argument"),
+                }
+            },
+            "GOTOTR" => {
+                match targs {
+                    (&ArgExpr(Immediate(v)), &ArgEmpty, &ArgEmpty, &ArgEmpty) => {
+                        match v.as_i16() {
+                            1..24 => Ok(GotoTransaction(v)),
+                            _ => Err("GOTOTR argument must be in [1, 24]"),
+                        }
+                    },
+                    _ => Err("GOTOTR takes only a single numeric argument"),
                 }
             },
             _ => Err("unrecognised name"),
@@ -979,6 +1024,21 @@ impl Show for Instruction {
             },
             &GotoPage(v) => {
                 "GOTO".fmt(formatter);
+                formatter.write_char(' ');
+                v.fmt(formatter)
+            },
+            &GotoFKey(v) => {
+                "GOTOF".fmt(formatter);
+                formatter.write_char(' ');
+                v.fmt(formatter)
+            },
+            &GotoPrompt(addr) => {
+                "GOTO".fmt(formatter);
+                formatter.write_char(' ');
+                addr.fmt(formatter)
+            },
+            &GotoTransaction(v) => {
+                "GOTOTR".fmt(formatter);
                 formatter.write_char(' ');
                 v.fmt(formatter)
             },
