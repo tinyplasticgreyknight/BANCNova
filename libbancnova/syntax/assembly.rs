@@ -70,6 +70,13 @@ pub enum GotoSpecialTarget {
     MultitaskMenu,
 }
 
+#[deriving(PartialEq,Eq,Show)]
+pub enum DataModelField {
+    DataModelNumber,
+    DataModelLabel,
+    DataModelValue,
+}
+
 #[deriving(PartialEq,Eq)]
 pub enum Instruction {
     Unrecognised(Value, Value, Value, Value),
@@ -87,6 +94,9 @@ pub enum Instruction {
     GotoTransaction(Value),
     GotoSpecial(GotoSpecialTarget),
     SystemCall(CellAddress),
+    DataRun(bool, DataModelField, CellAddress, CellAddress),
+    DataPut(bool, DataModelField, CellAddress, CellAddress),
+    DataGet(bool, DataModelField, CellAddress, CellAddress),
     AutoSolve,
     AutoSave,
     Arithmetic(CellAddress, ArithTerm, ArithTerm, ArithTerm),
@@ -589,11 +599,33 @@ fn arithmetic_from_bscode(opcode: Value, a: Value, b: Value, c: Value) -> Option
     }
 }
 
+impl DataModelField {
+    pub fn new<T: ToPrimitive>(v: T) -> Option<DataModelField> {
+        match v.to_u64() {
+            Some(0) => Some(DataModelNumber),
+            Some(1) => Some(DataModelLabel),
+            Some(2) => Some(DataModelValue),
+            _ => None
+        }
+    }
+}
+
+impl ToValue for DataModelField {
+    fn as_value(&self) -> Value {
+        match self {
+            &DataModelNumber => 0,
+            &DataModelLabel => 1,
+            &DataModelValue => 2,
+        }.as_value()
+    }
+}
+
 impl Instruction {
     pub fn from_bscode(inst: &bscode::Instruction) -> Instruction {
         let opcode = inst.get(0).as_i16() as int;
         let (a, b, c) = (*inst.get(1), *inst.get(2), *inst.get(3));
         let all_args_zero = a.is_zero() && b.is_zero() && c.is_zero();
+        let give_up = Unrecognised(opcode.as_value(), a, b, c);
         match opcode {
             1..2000 => {
                 let p1 = Position::from_packed(a);
@@ -621,7 +653,7 @@ impl Instruction {
                         ReverseBlockConditional(ocomp.unwrap())
                     }
                 } else {
-                    Unrecognised(opcode.as_value(), a, b, c)
+                    give_up
                 }
             },
             8000 => {
@@ -642,17 +674,23 @@ impl Instruction {
                     4069 => GotoSpecial(ExitSystem),
                     4083 => GotoSpecial(Storage),
                     4084 => GotoSpecial(MultitaskMenu),
-                    _ => Unrecognised(opcode.as_value(), a, b, c),
+                    _ => give_up,
                 }
             },
             8560 => SystemCall(CellAddress::new(c)),
             8700 if all_args_zero => AutoSolve,
             9001 if all_args_zero => AutoSave,
+            9200|9201 => {
+                match DataModelField::new(a) {
+                    Some(field) => DataRun(opcode%10==1, field, CellAddress::new(b), CellAddress::new(c)),
+                    None => give_up,
+                }
+            },
             10000..11999 => match arithmetic_from_bscode(opcode.as_value(), a, b, c) {
                 Some(a) => a,
-                None => Unrecognised(opcode.as_value(), a, b, c),
+                None => give_up,
             },
-            _ => Unrecognised(opcode.as_value(), a, b, c),
+            _ => give_up,
         }
     }
 
@@ -676,6 +714,9 @@ impl Instruction {
             &SystemCall(addr) => bscode::Instruction::new(8560,0,0,addr.as_value()),
             &AutoSolve => bscode::Instruction::new(8700,0,0,0),
             &AutoSave => bscode::Instruction::new(9001,0,0,0),
+            &DataRun(flag,field,addr1,addr2) => bscode::Instruction::new(9200+if flag { 1 } else { 0 }, field.as_value(), addr1.as_value(), addr2.as_value()),
+            &DataPut(flag,field,addr1,addr2) => bscode::Instruction::new(9300+if flag { 1 } else { 0 }, field.as_value(), addr1.as_value(), addr2.as_value()),
+            &DataGet(flag,field,addr1,addr2) => bscode::Instruction::new(9400+if flag { 1 } else { 0 }, field.as_value(), addr1.as_value(), addr2.as_value()),
             &Arithmetic(addr, t1, t2, t3) => bscode::Instruction::new(addr+10000,t1,t2,t3),
             &Unrecognised(a,b,c,d) => bscode::Instruction::new(a,b,c,d),
             x => conditional_as_bscode(x).unwrap(),
@@ -730,6 +771,47 @@ impl Instruction {
                 *vargs.get(2),
                 *vargs.get(3)
         ))
+    }
+
+    pub fn parse_datamodel(name: String, arg1: &Argument, arg2: &Argument) -> BancResult<Instruction> {
+        let addr1 = match arg1 {
+            &ArgExpr(Cell(addr)) => addr,
+            &ArgExpr(Immediate(v)) if v.is_zero() => Zero::zero(),
+            &ArgEmpty => Zero::zero(),
+            _ => { return Err("first argument for datamodel command must be cell"); },
+        };
+        let addr2 = match arg2 {
+            &ArgExpr(Cell(addr)) => addr,
+            &ArgExpr(Immediate(v)) if v.is_zero() => Zero::zero(),
+            &ArgEmpty => Zero::zero(),
+            _ => { return Err("second argument for datamodel command must be cell"); },
+        };
+        let name = name.as_slice();
+        let field =
+        if name.ends_with("N") {
+            DataModelNumber
+        } else if name.ends_with("L") {
+            DataModelLabel
+        } else if name.ends_with("V") {
+            DataModelValue
+        } else {
+            return Err("unrecognised data model field");
+        };
+        let flag =
+        match name.char_at(7) {
+            '0' => false,
+            '1' => true,
+            _ => { return Err("unrecognised data model offset"); },
+        };
+        if name.starts_with("DATARUN") {
+            Ok(DataRun(flag, field, addr1, addr2))
+        } else if name.starts_with("DATAPUT") {
+            Ok(DataPut(flag, field, addr1, addr2))
+        } else if name.starts_with("DATAGET") {
+            Ok(DataGet(flag, field, addr1, addr2))
+        } else {
+            Err("unrecognised data model command")
+        }
     }
 
     pub fn parse_general(name: String, args: Vec<Argument>) -> BancResult<Instruction> {
@@ -840,7 +922,13 @@ impl Instruction {
                     _ => Err("SYSCALL needs a cell argument"),
                 }
             },
-            _ => Err("unrecognised name"),
+            _ => {
+                if name.as_slice().starts_with("DATA") {
+                    Instruction::parse_datamodel(name, args.get(0), args.get(1))
+                } else {
+                    Err("unrecognised name")
+                }
+            },
         }
     }
 }
@@ -990,6 +1078,33 @@ fn render_arith_terms(t1: ArithTerm, t2: ArithTerm, t3: ArithTerm, formatter: &m
     Ok(())
 }
 
+#[allow(unused_must_use)]
+fn format_data_model_opcode(name: &'static str, flag: bool, field: DataModelField, addr1: CellAddress, addr2: CellAddress, formatter: &mut Formatter) -> Result<(), FormatError> {
+    "DATA".fmt(formatter);
+    name.fmt(formatter);
+    if flag {
+        formatter.write_char('1');
+    } else {
+        formatter.write_char('0');
+    }
+    let mut status = match field {
+        DataModelNumber => "N",
+        DataModelLabel => "L",
+        DataModelValue => "V",
+    }.fmt(formatter);
+
+    if addr1.is_zero() && addr2.is_zero() {
+        return status;
+    }
+    formatter.write_char(' ');
+    status = addr1.fmt(formatter);
+    if ! addr2.is_zero() {
+        ", ".fmt(formatter);
+        status = addr2.fmt(formatter);
+    }
+    return status;
+}
+
 impl Show for Instruction {
     #[allow(unused_must_use)]
     fn fmt(&self, formatter: &mut Formatter) -> Result<(), FormatError> {
@@ -1013,11 +1128,8 @@ impl Show for Instruction {
                 if !rz {
                     status = r.fmt(formatter);
                 }
-                if p2z {
-                    return status;
-                }
-                formatter.write_str(", ");
                 if !p2z {
+                    formatter.write_str(", ");
                     status = p2.fmt(formatter);
                 }
                 return status;
@@ -1106,6 +1218,9 @@ impl Show for Instruction {
                 formatter.write_char(' ');
                 addr.fmt(formatter)
             },
+            &DataRun(flag,field,addr1,addr2) => format_data_model_opcode("RUN", flag, field, addr1, addr2, formatter),
+            &DataPut(flag,field,addr1,addr2) => format_data_model_opcode("PUT", flag, field, addr1, addr2, formatter),
+            &DataGet(flag,field,addr1,addr2) => format_data_model_opcode("GET", flag, field, addr1, addr2, formatter),
             &Unrecognised(v0, v1, v2, v3) => {
                 "RAW".fmt(formatter);
                 formatter.write_char(' ');

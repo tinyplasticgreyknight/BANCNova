@@ -48,8 +48,12 @@ impl CellAddress {
 impl Show for CellAddress {
     #[allow(unused_must_use)]
     fn fmt(&self, formatter: &mut Formatter) -> Result<(), FormatError> {
-        formatter.write_char('@');
-        self.as_value().fmt(formatter)
+        if self.a == 0 {
+            "0".fmt(formatter)
+        } else {
+            formatter.write_char('@');
+            self.as_value().fmt(formatter)
+        }
     }
 }
 
@@ -121,6 +125,15 @@ impl Zero for Value {
 impl One for Value {
     fn one() -> Value {
         Value::new(1)
+    }
+}
+
+impl Zero for CellAddress {
+    fn zero() -> CellAddress {
+        CellAddress::new(0)
+    }
+    fn is_zero(&self) -> bool {
+        self.a == 0
     }
 }
 

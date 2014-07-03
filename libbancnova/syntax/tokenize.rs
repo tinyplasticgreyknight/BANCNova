@@ -85,7 +85,7 @@ impl<R: Reader> Tokenizer<R> {
                 Err(_) => {
                     return None;
                 },
-                Ok(c) if (c>='a' && c<='z') || (c>='A' && c<='Z') || c=='_' => {
+                Ok(c) if (c>='a' && c<='z') || (c>='A' && c<='Z') || (c>='0' && c<='9') || c=='_' => {
                     buffer.push_char(c);
                 },
                 Ok(c) => {
