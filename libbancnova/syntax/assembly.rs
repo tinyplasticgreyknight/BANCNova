@@ -18,6 +18,11 @@ pub enum Expression {
     Nothing,
 }
 #[deriving(PartialEq,Eq)]
+pub enum AddressOrValue {
+    EAddress(CellAddress),
+    EValue(Value),
+}
+#[deriving(PartialEq,Eq)]
 pub enum UnaryComparator {
     IsNull,
     IsNotNull,
@@ -94,9 +99,9 @@ pub enum Instruction {
     GotoTransaction(Value),
     GotoSpecial(GotoSpecialTarget),
     SystemCall(CellAddress),
-    DataRun(bool, DataModelField, CellAddress, CellAddress),
-    DataPut(bool, DataModelField, CellAddress, CellAddress),
-    DataGet(bool, DataModelField, CellAddress, CellAddress),
+    DataRun(bool, DataModelField, AddressOrValue, AddressOrValue),
+    DataPut(bool, DataModelField, AddressOrValue, AddressOrValue),
+    DataGet(bool, DataModelField, AddressOrValue, AddressOrValue),
     AutoSolve,
     AutoSave,
     Arithmetic(CellAddress, ArithTerm, ArithTerm, ArithTerm),
@@ -162,12 +167,8 @@ impl Expression {
                 }
             },
             tokenize::AddressSign => {
-                match tokenizer.next() {
-                    Some(tokenize::IntegerLiteral(a)) => {
-                        CellAddress::parse(a).map(|a| { Cell(a) })
-                    },
-                    _ => Err("expected integer after address-sign")
-                }
+                tokenizer.unget_token(tokenize::AddressSign);
+                CellAddress::parse_tokens(tokenizer).map(|a| Cell(a))
             },
             tokenize::NothingMarker => Ok(Nothing),
             tokenize::IntegerLiteral(s) => {
@@ -238,6 +239,60 @@ impl Show for Position {
     fn fmt(&self, formatter: &mut Formatter) -> Result<(), FormatError> {
         let v = self.as_packed();
         v.fmt(formatter)
+    }
+}
+
+impl AddressOrValue {
+    fn parse(v: Value) -> Option<AddressOrValue> {
+        match v.as_i16() {
+            1..2000 => Some(EAddress(CellAddress::new(v))),
+            10000..19999 => Some(EValue(Value::new(v - 10000))),
+            _ => None,
+        }
+    }
+}
+
+impl Show for AddressOrValue {
+    #[allow(unused_must_use)]
+    fn fmt(&self, formatter: &mut Formatter) -> Result<(), FormatError> {
+        match self {
+            &EAddress(addr) => addr.fmt(formatter),
+            &EValue(v) => v.fmt(formatter),
+        }
+    }
+}
+
+impl ToValue for AddressOrValue {
+    fn as_value(&self) -> Value {
+        match self {
+            &EAddress(addr) => addr.as_value(),
+            &EValue(v) => v+10000,
+        }
+    }
+}
+
+impl Add<AddressOrValue, AddressOrValue> for AddressOrValue {
+    fn add(&self, rhs: &AddressOrValue) -> AddressOrValue {
+        match (self, rhs) {
+            (&EAddress(a1), &EAddress(a2)) => EAddress(a1+a2),
+            _ => {
+                let a = self.as_value();
+                let b = rhs.as_value();
+                EValue(a+b)
+            },
+        }
+    }
+}
+
+impl Zero for AddressOrValue {
+    fn zero() -> AddressOrValue {
+        EValue(Zero::zero())
+    }
+    fn is_zero(&self) -> bool {
+        match self {
+            &EAddress(addr) => addr.is_zero(),
+            &EValue(v) => v.is_zero(),
+        }
     }
 }
 
@@ -417,17 +472,17 @@ impl ArithOperator {
 impl ToValue for ArithOperator {
     fn as_value(&self) -> Value {
         match self {
-            &Length => 0.as_value(),
-            &Subtract => 1.as_value(),
-            &Add => 2.as_value(),
-            &Multiply => 3.as_value(),
-            &Divide => 4.as_value(),
-            &Substring => 5.as_value(),
-            &System => 6.as_value(),
-            &Logarithm => 7.as_value(),
-            &TruncateInt => 8.as_value(),
-            &Date => 9.as_value(),
-        }
+            &Length => 0,
+            &Subtract => 1,
+            &Add => 2,
+            &Multiply => 3,
+            &Divide => 4,
+            &Substring => 5,
+            &System => 6,
+            &Logarithm => 7,
+            &TruncateInt => 8,
+            &Date => 9,
+        }.as_value()
     }
 }
 
@@ -680,10 +735,16 @@ impl Instruction {
             8560 => SystemCall(CellAddress::new(c)),
             8700 if all_args_zero => AutoSolve,
             9001 if all_args_zero => AutoSave,
-            9200|9201 => {
-                match DataModelField::new(a) {
-                    Some(field) => DataRun(opcode%10==1, field, CellAddress::new(b), CellAddress::new(c)),
-                    None => give_up,
+            9200|9201|9300|9301|9400|9401 => {
+                let flag = opcode%10 == 1;
+                match (DataModelField::new(a), AddressOrValue::parse(b), AddressOrValue::parse(c)) {
+                    (Some(field), Some(addr1), Some(addr2)) => match opcode {
+                        9200|2301 => DataPut(flag, field, addr1, addr2),
+                        9300|9301 => DataPut(flag, field, addr1, addr2),
+                        9400|9401 => DataGet(flag, field, addr1, addr2),
+                        _ => give_up,
+                    },
+                    _ => give_up,
                 }
             },
             10000..11999 => match arithmetic_from_bscode(opcode.as_value(), a, b, c) {
@@ -774,15 +835,15 @@ impl Instruction {
     }
 
     pub fn parse_datamodel(name: String, arg1: &Argument, arg2: &Argument) -> BancResult<Instruction> {
-        let addr1 = match arg1 {
-            &ArgExpr(Cell(addr)) => addr,
-            &ArgExpr(Immediate(v)) if v.is_zero() => Zero::zero(),
+        let addr1: AddressOrValue = match arg1 {
+            &ArgExpr(Cell(addr)) => EAddress(addr),
+            &ArgExpr(Immediate(v)) => EValue(v),
             &ArgEmpty => Zero::zero(),
             _ => { return Err("first argument for datamodel command must be cell"); },
         };
-        let addr2 = match arg2 {
-            &ArgExpr(Cell(addr)) => addr,
-            &ArgExpr(Immediate(v)) if v.is_zero() => Zero::zero(),
+        let addr2: AddressOrValue = match arg2 {
+            &ArgExpr(Cell(addr)) => EAddress(addr),
+            &ArgExpr(Immediate(v)) => EValue(v),
             &ArgEmpty => Zero::zero(),
             _ => { return Err("second argument for datamodel command must be cell"); },
         };
@@ -964,7 +1025,7 @@ fn parse_argument<R: Reader>(tokenizer: &mut Tokenizer<R>) -> BancResult<Option<
         return Ok(None);
     }
     let tok = tok.unwrap();
-    match tok {
+    match tok.clone() {
         Comma => {
             Ok(Some(ArgEmpty))
         },
@@ -982,7 +1043,9 @@ fn parse_argument<R: Reader>(tokenizer: &mut Tokenizer<R>) -> BancResult<Option<
                 Some(Newline) => {
                     tokenizer.unget_token(Newline);
                 },
-                _ => { return Err("expected comma/newline/eof after expression"); },
+                _ => {
+                    return Err("expected comma/newline/eof after expression");
+                },
             }
             result
         }
@@ -1079,7 +1142,7 @@ fn render_arith_terms(t1: ArithTerm, t2: ArithTerm, t3: ArithTerm, formatter: &m
 }
 
 #[allow(unused_must_use)]
-fn format_data_model_opcode(name: &'static str, flag: bool, field: DataModelField, addr1: CellAddress, addr2: CellAddress, formatter: &mut Formatter) -> Result<(), FormatError> {
+fn format_data_model_opcode(name: &'static str, flag: bool, field: DataModelField, addr1: AddressOrValue, addr2: AddressOrValue, formatter: &mut Formatter) -> Result<(), FormatError> {
     "DATA".fmt(formatter);
     name.fmt(formatter);
     if flag {

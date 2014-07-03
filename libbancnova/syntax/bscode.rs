@@ -3,7 +3,7 @@ use std::fmt::{Show, Formatter, FormatError, WriteError};
 use std::string::String;
 use result::BancResult;
 use syntax::tree::{TreeNode};
-use syntax::tokenize::{Tokenizer, Newline, IntegerLiteral, Comma};
+use syntax::tokenize::{Tokenizer, Newline, IntegerLiteral, Comma, AddressSign};
 #[cfg(test)]
 use std::io::{File};
 #[cfg(test)]
@@ -37,6 +37,29 @@ impl CellAddress {
                 }
             },
             Err(e) => Err(e),
+        }
+    }
+
+    pub fn parse_tokens<R: Reader>(tokenizer: &mut Tokenizer<R>) -> BancResult<CellAddress> {
+        let mut levels = 0;
+        loop {
+            match tokenizer.next() {
+                Some(AddressSign) => {
+                    levels += 1;
+                },
+                Some(other) => {
+                    tokenizer.unget_token(other);
+                    break;
+                },
+                None => { break; }
+            }
+        }
+        if levels != 1 {
+            return Err("not a valid cell address literal");
+        }
+        match tokenizer.next() {
+            Some(IntegerLiteral(a)) => CellAddress::parse(a),
+            _ => Err("expected integer after address-sign"),
         }
     }
 
