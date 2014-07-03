@@ -7,6 +7,8 @@ use bancnova::syntax::bscode;
 use bancnova::syntax::assembly;
 use bancnova::syntax::tokenize;
 use bancnova::syntax::tokenize::Tokenizer;
+use bancnova::syntax::tree;
+use bancnova::syntax::tree::Tree;
 use std::io::{File, IoResult, IoError, FileMode, FileAccess, Read, Truncate, Write, Open};
 
 fn main() {
@@ -23,8 +25,8 @@ fn main() {
 }
 
 fn disassemble<R: Reader>(tokenizer: &mut Tokenizer<R>, writer: &mut Writer) -> IoResult<()> {
-    let tree = bscode::Tree::parse(tokenizer).unwrap();
-    for bsinst in tree.iter() {
+    let bstree = tree::Tree::parse(tokenizer).unwrap();
+    for bsinst in bstree.iter() {
         let inst = assembly::Instruction::from_bscode(bsinst);
         match writer.write_line(inst.to_str().as_slice()) {
             Err(e) => { return Err(e); },

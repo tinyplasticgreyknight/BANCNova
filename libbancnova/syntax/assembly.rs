@@ -4,6 +4,8 @@ use syntax::bscode;
 use syntax::bscode::{Value, CellAddress, ToValue};
 use result::BancResult;
 use syntax::tokenize;
+#[cfg(test)]
+use syntax::tree::Tree;
 
 #[deriving(PartialEq,Eq)]
 pub enum Expression {
@@ -132,8 +134,7 @@ impl Show for Expression {
                 Ok(())
             },
             &Cell(a) => {
-                formatter.write_char('@');
-                a.as_value().fmt(formatter)
+                a.fmt(formatter)
             },
             &Nothing => {
                 "Nothing".fmt(formatter)
@@ -233,7 +234,7 @@ impl Show for ArithTerm {
             &ArithCell(op, addr) => {
                 op.fmt(formatter);
                 formatter.write_char('(');
-                render_address(addr, formatter);
+                addr.fmt(formatter);
                 formatter.write_char(')');
                 Ok(())
             },
@@ -459,12 +460,6 @@ impl Instruction {
 }
 
 #[allow(unused_must_use)]
-fn render_address(addr: CellAddress, formatter: &mut Formatter) -> Result<(), FormatError> {
-    formatter.write_char('@');
-    addr.as_value().as_i16().fmt(formatter)
-}
-
-#[allow(unused_must_use)]
 fn render_arith_terms(t1: ArithTerm, t2: ArithTerm, t3: ArithTerm, formatter: &mut Formatter) -> Result<(), FormatError> {
     let p1 = t1.effective();
     let p2 = t2.effective();
@@ -492,7 +487,7 @@ impl Show for Instruction {
             &Arithmetic(addr, t1, t2, t3) => {
                 "SET".fmt(formatter);
                 formatter.write_char(' ');
-                render_address(addr, formatter);
+                addr.fmt(formatter);
                 render_arith_terms(t1, t2, t3, formatter)
             },
             &NewPage => {
@@ -685,7 +680,7 @@ fn render_arith() {
 #[test]
 fn disassemble_line() {
     let strform = "10350,22422,2693,22537";
-    let bstree = bscode::Tree::parse_string(strform).unwrap();
+    let bstree = Tree::<bscode::Instruction>::parse_string(strform).unwrap();
     assert_eq!(bstree.len(), 1);
     let inst = Instruction::from_bscode(bstree.get(0));
     let disassembled = inst.to_str();

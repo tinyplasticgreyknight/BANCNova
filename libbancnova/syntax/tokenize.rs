@@ -137,6 +137,22 @@ impl<R: Reader> Tokenizer<R> {
             }
         }
     }
+
+    pub fn eof(&mut self) -> bool {
+        if self.ungotch.is_some() {
+            return false;
+        }
+        match self.breader.read_char() {
+            Ok(c) => {
+                self.ungotch = Some(c);
+                return false;
+            },
+            _ => {
+
+                return true;
+            },
+        }
+    }
 }
 
 impl<R: Reader> Iterator<Token> for Tokenizer<R> {

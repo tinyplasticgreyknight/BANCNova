@@ -1,17 +1,21 @@
 use std::io::{BufferedWriter};
-use std::io::{File, BufReader};
 use std::fmt::{Show, Formatter, FormatError, WriteError};
-use std::container::Container;
 use std::string::String;
-use syntax::tokenize::{Tokenizer, IntegerLiteral, Comma, Newline};
 use result::BancResult;
+use syntax::tree::{TreeNode};
+use syntax::tokenize::{Tokenizer, Newline, IntegerLiteral, Comma};
+#[cfg(test)]
+use std::io::{File};
+#[cfg(test)]
+use syntax::tree::Tree;
+
 
 #[deriving(PartialEq,Eq)]
 pub struct Value {
     x: i16,
 }
 
-#[deriving(PartialEq,Eq,Show)]
+#[deriving(PartialEq,Eq)]
 pub struct CellAddress {
     a: i16,
 }
@@ -37,6 +41,14 @@ impl CellAddress {
 
     pub fn as_value(&self) -> Value {
         Value::new(self.a)
+    }
+}
+
+impl Show for CellAddress {
+    #[allow(unused_must_use)]
+    fn fmt(&self, formatter: &mut Formatter) -> Result<(), FormatError> {
+        formatter.write_char('@');
+        self.as_value().fmt(formatter)
     }
 }
 
@@ -70,16 +82,6 @@ impl<B: ToValue> Mul<B, CellAddress> for CellAddress {
 
 pub struct Instruction {
     values: [Value, ..4],
-}
-
-#[deriving(PartialEq,Eq)]
-pub struct Tree {
-    instructions: Vec<Instruction>,
-}
-
-pub struct TreeIterator<'a> {
-    tree: &'a Tree,
-    i: uint,
 }
 
 impl Value {
@@ -124,7 +126,7 @@ impl Instruction {
         Instruction { values: [v0.as_value(), v1.as_value(), v2.as_value(), v3.as_value()] }
     }
 
-    pub fn parse(s0: String, s1: String, s2: String, s3: String) -> BancResult<Instruction> {
+    pub fn parse_elem(s0: String, s1: String, s2: String, s3: String) -> BancResult<Instruction> {
         let v0 = Value::parse(s0);
         let v1 = Value::parse(s1);
         let v2 = Value::parse(s2);
@@ -141,7 +143,7 @@ impl Instruction {
         if elements.len() != 4 {
             return Ok(None);
         }
-        let inst = Instruction::parse(elements.get(0).clone(), elements.get(1).clone(), elements.get(2).clone(), elements.get(3).clone());
+        let inst = Instruction::parse_elem(elements.get(0).clone(), elements.get(1).clone(), elements.get(2).clone(), elements.get(3).clone());
         elements.truncate(0);
         match inst {
             Err(msg) => { Err(msg) },
@@ -181,38 +183,15 @@ impl PartialEq for Instruction {
 }
 impl Eq for Instruction {}
 
-impl Tree {
-    pub fn new() -> Tree {
-        Tree{ instructions: vec!() }
-    }
-
-    pub fn push(&mut self, inst: Instruction) {
-        self.instructions.push(inst);
-    }
-
-    pub fn get<'a>(&'a self, index: uint) -> &'a Instruction {
-        self.instructions.get(index)
-    }
-
-    pub fn parse_string(text: &str) -> BancResult<Tree> {
-        let sreader = BufReader::new(text.as_bytes());
-        let mut tokenizer = Tokenizer::<BufReader>::from_buf(sreader);
-        Tree::parse(&mut tokenizer)
-    }
-
-    pub fn parse_file(file: File) -> BancResult<Tree> {
-        let mut tokenizer = Tokenizer::<File>::from_file(file);
-        Tree::parse(&mut tokenizer)
-    }
-
-    pub fn parse<R: Reader>(tokenizer: &mut Tokenizer<R>) -> BancResult<Tree> {
+impl TreeNode for Instruction {
+    fn parse<R: Reader>(tokenizer: &mut Tokenizer<R>) -> BancResult<Option<Instruction>> {
         let mut tokenizer = tokenizer;
-        let mut tree = Tree::new();
         let mut elements: Vec<String> = vec!();
         let mut lasttoken = Newline;
         let empty: String = "0".to_string();
         for token in tokenizer {
             match token.clone() {
+                Newline => { break; },
                 IntegerLiteral(s) => {
                     elements.push(s);
                 },
@@ -221,17 +200,9 @@ impl Tree {
                         elements.push(empty.clone());
                     }
                 },
-                Newline => {
-                    if lasttoken == Comma {
-                        elements.push(empty.clone());
-                    }
-                    match Instruction::parse_vec(&mut elements) {
-                        Ok(None) => fail!("not enough elements on line"),
-                        Ok(Some(inst)) => tree.push(inst),
-                        Err(e) => { return Err(e); },
-                    }
+                _ => {
+                    return Err("unexpected token");
                 },
-                _ => fail!("unexpected token [{}]", token)
             }
             lasttoken = token;
         }
@@ -239,66 +210,10 @@ impl Tree {
             elements.push(empty.clone());
         }
         match Instruction::parse_vec(&mut elements) {
-            Ok(None) => {},
-            Ok(Some(inst)) => tree.push(inst),
-            Err(e) => { return Err(e); }
+            Ok(None) => Ok(None),
+            Ok(Some(inst)) => Ok(Some(inst)),
+            Err(e) => Err(e),
         }
-        Ok(tree)
-    }
-
-    pub fn render<W: Writer>(&self, buffer: &mut BufferedWriter<W>) {
-        buffer.write_str(self.to_str().as_slice()).unwrap();
-    }
-
-    pub fn iter<'a>(&'a self) -> TreeIterator<'a> {
-        TreeIterator { tree: self, i: 0 }
-    }
-}
-
-impl Container for Tree {
-    fn len(&self) -> uint {
-        self.instructions.len()
-    }
-    fn is_empty(&self) -> bool {
-        self.instructions.is_empty()
-    }
-}
-
-impl<'a> TreeIterator<'a> {
-    fn maybe_get(&self, i: uint) -> Option<&'a Instruction> {
-        if self.i < self.tree.len() {
-            Some(self.tree.get(i))
-        } else {
-            None
-        }
-    }
-}
-
-impl<'a> Iterator<&'a Instruction> for TreeIterator<'a> {
-    fn next(&mut self) -> Option<&'a Instruction> {
-        let o = self.maybe_get(self.i);
-        self.i += 1;
-        o
-    }
-}
-
-impl<'a> RandomAccessIterator<&'a Instruction> for TreeIterator<'a> {
-    fn indexable(&self) -> uint {
-        self.tree.len()
-    }
-    fn idx(&mut self, i: uint) -> Option<&'a Instruction> {
-        self.maybe_get(i)
-    }
-}
-
-impl Show for Tree {
-    #[allow(unused_must_use)]
-    fn fmt(&self, formatter: &mut Formatter) -> Result<(), FormatError> {
-        for inst in self.instructions.iter() {
-            inst.fmt(formatter);
-            formatter.write_char('\n');
-        }
-        Ok(())
     }
 }
 
