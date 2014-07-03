@@ -74,6 +74,7 @@ pub enum Instruction {
     AutoSave,
     Arithmetic(CellAddress, ArithTerm, ArithTerm, ArithTerm),
     ShowPrompt(CellAddress, Position, Value, Position),
+    Window(Value, Position, Position),
 }
 
 #[deriving(PartialEq,Eq,Show)]
@@ -594,6 +595,12 @@ impl Instruction {
                     Unrecognised(opcode.as_value(), a, b, c)
                 }
             },
+            8000 => {
+                let clrpair = a;
+                let p1 = Position::from_packed(b);
+                let p2 = Position::from_packed(c);
+                Window(clrpair, p1, p2)
+            },
             8400 if all_args_zero => SaveAddress,
             8500 if a.is_zero() && c.is_zero() => GotoPage(b),
             9001 if all_args_zero => AutoSave,
@@ -611,6 +618,7 @@ impl Instruction {
             &NewPage => bscode::Instruction::new(2999,0,0,0),
             &BlockEnd => bscode::Instruction::new(3001,0,0,0),
             &ReverseBlockEnd => bscode::Instruction::new(3101,0,0,0),
+            &Window(clr, p1, p2) => bscode::Instruction::new(8000, clr, p1.as_packed(), p2.as_packed()),
             &SaveAddress => bscode::Instruction::new(8400,0,0,0),
             &GotoPage(n) => bscode::Instruction::new(8500,0,n,0),
             &AutoSave => bscode::Instruction::new(9001,0,0,0),
@@ -709,6 +717,23 @@ impl Instruction {
                     }
                 }
                 Ok(Arithmetic(addr, *arithargs.get(0), *arithargs.get(1), *arithargs.get(2)))
+            },
+            "WINDOW" => {
+                let clr = match vargs.get(0) {
+                    &Some(v) => v,
+                    _ => { return Err("WINDOW must have a number for its first argument") },
+                };
+                let p1 = match args.get(1) {
+                    &ArgExpr(Immediate(v)) => Position::from_packed(v),
+                    &ArgEmpty => Zero::zero(),
+                    _ => { return Err("SHOW must have a number for its second argument"); }
+                };
+                let p2 = match args.get(2) {
+                    &ArgExpr(Immediate(v)) => Position::from_packed(v),
+                    &ArgEmpty => Zero::zero(),
+                    _ => { return Err("SHOW must have a number for its third argument"); }
+                };
+                Ok(Window(clr, p1, p2))
             },
             "GOTO" => {
                 match targs {
@@ -907,6 +932,15 @@ impl Show for Instruction {
             },
             &NewPage => {
                 "NEWPAGE".fmt(formatter)
+            },
+            &Window(clr, p1, p2) => {
+                "WINDOW".fmt(formatter);
+                formatter.write_char(' ');
+                clr.fmt(formatter);
+                formatter.write_str(", ");
+                p1.fmt(formatter);
+                formatter.write_str(", ");
+                p2.fmt(formatter)
             },
             &SaveAddress => {
                 "SAVEADDR".fmt(formatter)
