@@ -24,6 +24,7 @@ pub enum UnaryComparator {
 }
 #[deriving(PartialEq,Eq)]
 pub enum BinaryComparator {
+    Less,
     LessOrEqual,
     Equal,
     GreaterOrEqual,
@@ -252,18 +253,20 @@ impl UnaryComparator {
 impl ToValue for BinaryComparator {
     fn as_value(&self) -> Value {
         match self {
-            &LessOrEqual => 2.as_value(),
-            &Equal => 3.as_value(),
-            &GreaterOrEqual => 4.as_value(),
-            &Greater => 5.as_value(),
-            &NotEqual => 6.as_value(),
-        }
+            &Less => 1,
+            &LessOrEqual => 2,
+            &Equal => 3,
+            &GreaterOrEqual => 4,
+            &Greater => 5,
+            &NotEqual => 6,
+        }.as_value()
     }
 }
 
 impl BinaryComparator {
     pub fn from_bscode(op: Value) -> Option<BinaryComparator> {
         match op.as_i16() {
+            1 => Some(Less),
             2 => Some(LessOrEqual),
             3 => Some(Equal),
             4 => Some(GreaterOrEqual),
@@ -484,6 +487,7 @@ impl Comparison {
                 match (expr1, op, expr2) {
                     (Ok(e1), Some(OperToken(op)), Ok(e2)) => {
                         match op.as_slice() {
+                            "<"  => Ok(BinaryComparison(e1, Less, e2)),
                             "<=" => Ok(BinaryComparison(e1, LessOrEqual, e2)),
                             "==" => Ok(BinaryComparison(e1, Equal, e2)),
                             ">=" => Ok(BinaryComparison(e1, GreaterOrEqual, e2)),
@@ -511,6 +515,12 @@ impl Show for Comparison {
                 formatter.write_char('(');
                 expr.fmt(formatter);
                 formatter.write_char(')');
+                Ok(())
+            },
+            &BinaryComparison(expr1, Less, expr2) => {
+                expr1.fmt(formatter);
+                formatter.write_str(" < ");
+                expr2.fmt(formatter);
                 Ok(())
             },
             &BinaryComparison(expr1, LessOrEqual, expr2) => {
