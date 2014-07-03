@@ -99,11 +99,12 @@ pub enum Instruction {
     GotoTransaction(Value),
     GotoSpecial(GotoSpecialTarget),
     SystemCall(CellAddress),
+    SetVideo(Value),
+    AutoSolve,
+    AutoSave,
     DataRun(bool, DataModelField, AddressOrValue, AddressOrValue),
     DataPut(bool, DataModelField, AddressOrValue, AddressOrValue),
     DataGet(bool, DataModelField, AddressOrValue, AddressOrValue),
-    AutoSolve,
-    AutoSave,
     Arithmetic(CellAddress, ArithTerm, ArithTerm, ArithTerm),
     ShowPrompt(CellAddress, Position, Value, Position),
     Window(Value, Position, Position),
@@ -733,6 +734,7 @@ impl Instruction {
                 }
             },
             8560 => SystemCall(CellAddress::new(c)),
+            8650 => SetVideo(c),
             8700 if all_args_zero => AutoSolve,
             9001 if all_args_zero => AutoSave,
             9200|9201|9300|9301|9400|9401 => {
@@ -775,6 +777,7 @@ impl Instruction {
             &GotoSpecial(Storage) => bscode::Instruction::new(8500,0,(4000+'S' as int).as_value(),0),
             &GotoSpecial(MultitaskMenu) => bscode::Instruction::new(8500,0,(4000+'T'as int).as_value(),0),
             &SystemCall(addr) => bscode::Instruction::new(8560,0,0,addr.as_value()),
+            &SetVideo(mode) => bscode::Instruction::new(8650,0,0,mode),
             &AutoSolve => bscode::Instruction::new(8700,0,0,0),
             &AutoSave => bscode::Instruction::new(9001,0,0,0),
             &DataRun(flag,field,addr1,addr2) => bscode::Instruction::new(9200+if flag { 1 } else { 0 }, field.as_value(), addr1.as_value(), addr2.as_value()),
@@ -991,6 +994,14 @@ impl Instruction {
                     },
                     _ => Err("SYSCALL needs a cell argument"),
                 }
+            },
+            "VIDEOMODE" => {
+                let m = match args.get(0) {
+                    &ArgExpr(Immediate(v)) => v,
+                    &ArgEmpty => Zero::zero(),
+                    _ => { return Err("VIDEO must have a number as its argument") },
+                };
+                Ok(SetVideo(m))
             },
             _ => {
                 if name.as_slice().starts_with("DATA") {
@@ -1231,6 +1242,11 @@ impl Show for Instruction {
             },
             &SaveAddress => {
                 "SAVEADDR".fmt(formatter)
+            },
+            &SetVideo(mode) => {
+                "VIDEOMODE".fmt(formatter);
+                formatter.write_char(' ');
+                mode.fmt(formatter)
             },
             &AutoSolve => {
                 "AUTOSOLVE".fmt(formatter)
