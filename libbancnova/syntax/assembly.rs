@@ -66,7 +66,7 @@ pub struct Position {
     y: Value,
 }
 
-#[deriving(PartialEq,Eq,Show)]
+#[deriving(PartialEq,Eq)]
 pub enum GotoSpecialTarget {
     ProductSales,
     MainMenu,
@@ -75,7 +75,7 @@ pub enum GotoSpecialTarget {
     MultitaskMenu,
 }
 
-#[deriving(PartialEq,Eq,Show)]
+#[deriving(PartialEq,Eq)]
 pub enum DataModelField {
     DataModelNumber,
     DataModelLabel,
@@ -83,8 +83,18 @@ pub enum DataModelField {
 }
 
 #[deriving(PartialEq,Eq)]
+pub enum TableMode {
+    TableSearch,
+    TableSearchRange,
+    TableSearchRangePairs,
+    TableTransfer,
+    TableTransferReverse,
+}
+
+#[deriving(PartialEq,Eq)]
 pub enum Instruction {
     Unrecognised(Value, Value, Value, Value),
+    ShowPrompt(CellAddress, Position, Value, Position),
     NewPage(Value),
     SimpleConditional(Comparison),
     BlockConditional(Comparison),
@@ -92,6 +102,7 @@ pub enum Instruction {
     ReverseSimpleConditional(Comparison),
     ReverseBlockConditional(Comparison),
     ReverseBlockEnd,
+    Window(Value, Position, Position),
     SaveAddress,
     GotoPage(Value),
     GotoPrompt(CellAddress),
@@ -106,8 +117,7 @@ pub enum Instruction {
     DataPut(bool, DataModelField, AddressOrValue, AddressOrValue),
     DataGet(bool, DataModelField, AddressOrValue, AddressOrValue),
     Arithmetic(CellAddress, ArithTerm, ArithTerm, ArithTerm),
-    ShowPrompt(CellAddress, Position, Value, Position),
-    Window(Value, Position, Position),
+    Table(bool, TableMode, CellAddress, AddressOrValue, Value, Value),
 }
 
 #[deriving(PartialEq,Eq,Show)]
@@ -244,7 +254,7 @@ impl Show for Position {
 }
 
 impl AddressOrValue {
-    fn parse(v: Value) -> Option<AddressOrValue> {
+    fn from_value(v: Value) -> Option<AddressOrValue> {
         match v.as_i16() {
             0 => Some(EValue(Zero::zero())),
             1..2000 => Some(EAddress(CellAddress::new(v))),
@@ -747,7 +757,7 @@ impl Instruction {
                 let flag = opcode%10 == 1;
                 // TODO: what does it really mean when the addr arguments are > 2000 ?
                 // is it really a numeric literal?  not convinced
-                match (DataModelField::new(a), AddressOrValue::parse(b), AddressOrValue::parse(c)) {
+                match (DataModelField::new(a), AddressOrValue::from_value(b), AddressOrValue::from_value(c)) {
                     (Some(field), Some(addr1), Some(addr2)) => match opcode {
                         9200|2301 => DataRun(flag, field, addr1, addr2),
                         9300|9301 => DataPut(flag, field, addr1, addr2),
@@ -760,6 +770,25 @@ impl Instruction {
             10000..11999 => match arithmetic_from_bscode(opcode.as_value(), a, b, c) {
                 Some(a) => a,
                 None => give_up,
+            },
+            30001..32000 => {
+                let p = CellAddress::new(opcode - 30000);
+                let c = c.as_i16();
+                let op = c % 10;
+                let flag = op % 2 == 1;
+                let y = b;
+                let z = Value::new(c / 10);
+                match AddressOrValue::from_value(a) {
+                    Some(x) => match op {
+                        1|2  => Table(flag, TableSearch, p, x, y, z),
+                        3|4  => Table(flag, TableSearchRange, p, x, y, z),
+                        5|6  => Table(flag, TableSearchRangePairs, p, x, y, z),
+                        7|8  => Table(flag, TableTransfer, p, x, y, z),
+                        9|10 => Table(flag, TableTransferReverse, p, x, y, z),
+                        _ => give_up,
+                    },
+                    None => give_up,
+                }
             },
             _ => give_up,
         }
@@ -786,10 +815,15 @@ impl Instruction {
             &SetVideo(mode) => bscode::Instruction::new(8650,0,0,mode),
             &AutoSolve => bscode::Instruction::new(8700,0,0,0),
             &AutoSave => bscode::Instruction::new(9001,0,0,0),
-            &DataRun(flag,field,addr1,addr2) => bscode::Instruction::new(9200+if flag { 1 } else { 0 }, field.as_value(), addr1.as_value(), addr2.as_value()),
-            &DataPut(flag,field,addr1,addr2) => bscode::Instruction::new(9300+if flag { 1 } else { 0 }, field.as_value(), addr1.as_value(), addr2.as_value()),
-            &DataGet(flag,field,addr1,addr2) => bscode::Instruction::new(9400+if flag { 1 } else { 0 }, field.as_value(), addr1.as_value(), addr2.as_value()),
+            &DataRun(flag,field,addr1,addr2) => bscode::Instruction::new(flag.as_value()+9200, field.as_value(), addr1.as_value(), addr2.as_value()),
+            &DataPut(flag,field,addr1,addr2) => bscode::Instruction::new(flag.as_value()+9300, field.as_value(), addr1.as_value(), addr2.as_value()),
+            &DataGet(flag,field,addr1,addr2) => bscode::Instruction::new(flag.as_value()+9400, field.as_value(), addr1.as_value(), addr2.as_value()),
             &Arithmetic(addr, t1, t2, t3) => bscode::Instruction::new(addr+10000,t1,t2,t3),
+            &Table(flag,TableSearch,p,x,y,z) => bscode::Instruction::new(p.as_value()+30000, x.as_value(), y, z*10+2-flag.as_value()),
+            &Table(flag,TableSearchRange,p,x,y,z) => bscode::Instruction::new(p.as_value()+30000, x.as_value(), y, z*10+4-flag.as_value()),
+            &Table(flag,TableSearchRangePairs,p,x,y,z) => bscode::Instruction::new(p.as_value()+30000, x.as_value(), y, z*10+6-flag.as_value()),
+            &Table(flag,TableTransfer,p,x,y,z) => bscode::Instruction::new(p.as_value()+30000, x.as_value(), y, z*10+8-flag.as_value()),
+            &Table(flag,TableTransferReverse,p,x,y,z) => bscode::Instruction::new(p.as_value()+30000, x.as_value(), y, z*10+10-flag.as_value()),
             &Unrecognised(a,b,c,d) => bscode::Instruction::new(a,b,c,d),
             x => conditional_as_bscode(x).unwrap(),
         }
@@ -845,16 +879,12 @@ impl Instruction {
     }
 
     pub fn parse_datamodel(name: String, arg1: &Argument, arg2: &Argument) -> BancResult<Instruction> {
-        let addr1: AddressOrValue = match arg1 {
-            &ArgExpr(Cell(addr)) => EAddress(addr),
-            &ArgExpr(Immediate(v)) => EValue(v),
-            &ArgEmpty => Zero::zero(),
+        let addr1: AddressOrValue = match arg1.as_address_or_value() {
+            Some(foo) => foo,
             _ => { return Err("first argument for datamodel command must be cell"); },
         };
-        let addr2: AddressOrValue = match arg2 {
-            &ArgExpr(Cell(addr)) => EAddress(addr),
-            &ArgExpr(Immediate(v)) => EValue(v),
-            &ArgEmpty => Zero::zero(),
+        let addr2: AddressOrValue = match arg2.as_address_or_value() {
+            Some(foo) => foo,
             _ => { return Err("second argument for datamodel command must be cell"); },
         };
         let name = name.as_slice();
@@ -882,6 +912,54 @@ impl Instruction {
             Ok(DataGet(flag, field, addr1, addr2))
         } else {
             Err("unrecognised data model command")
+        }
+    }
+
+    pub fn parse_table(name: String, p: &Argument, x: &Argument, y: &Argument, z: &Argument) -> BancResult<Instruction> {
+        let p: CellAddress = match p.as_address() {
+            Some(addr) => addr,
+            _ => { return Err("first argument for table command must be cell"); },
+        };
+        let x: AddressOrValue = match x.as_address_or_value() {
+            Some(foo) => foo,
+            _ => { return Err("second argument for table command must be cell or number"); },
+        };
+        let y: Value = match y.as_maybe_value() {
+            Some(v) => v,
+            _ => { return Err("third argument for table command must be number"); },
+        };
+        let z: Value = match z.as_maybe_value() {
+            Some(v) => v,
+            _ => { return Err("fourth argument for table command must be number"); },
+        };
+        let name = name.as_slice();
+        let flag =
+        if name.ends_with("D") {
+            Some(false)
+        } else if name.ends_with("V") {
+            Some(true)
+        } else {
+            None
+        };
+
+        let mode =
+        if name.starts_with("TABLESEARCH") {
+            Some(TableSearch)
+        } else if name.starts_with("TABLERANGE") {
+            Some(TableSearchRange)
+        } else if name.starts_with("TABLERANGEP") {
+            Some(TableSearchRangePairs)
+        } else if name.starts_with("TABLEXFER") {
+            Some(TableTransfer)
+        } else if name.starts_with("TABLERXFER") {
+            Some(TableTransferReverse)
+        } else {
+            None
+        };
+
+        match (flag, mode) {
+            (Some(flag), Some(mode)) => Ok(Table(flag, mode, p, x, y, z)),
+            _ => Err("unrecognised table command"),
         }
     }
 
@@ -1012,6 +1090,8 @@ impl Instruction {
             _ => {
                 if name.as_slice().starts_with("DATA") {
                     Instruction::parse_datamodel(name, args.get(0), args.get(1))
+                } else if name.as_slice().starts_with("TABLE") {
+                    Instruction::parse_table(name, args.get(0), args.get(1), args.get(2), args.get(3))
                 } else {
                     Err("unrecognised name")
                 }
@@ -1041,6 +1121,30 @@ impl Argument {
         match tok {
             Name(_) => ArithTerm::parse(tok, tokenizer).map(|x| ArgArith(x) ),
             a => Expression::parse(Some(a), tokenizer).map(|x| ArgExpr(x) ),
+        }
+    }
+
+    fn as_address_or_value(&self) -> Option<AddressOrValue> {
+        match self {
+            &ArgExpr(Cell(addr)) => Some(EAddress(addr)),
+            &ArgExpr(Immediate(v)) => Some(EValue(v)),
+            &ArgEmpty => Some(Zero::zero()),
+            _ => None,
+        }
+    }
+
+    fn as_maybe_value(&self) -> Option<Value> {
+        match self {
+            &ArgExpr(Immediate(v)) => Some(v),
+            &ArgEmpty => Some(Zero::zero()),
+            _ => None,
+        }
+    }
+
+    fn as_address(&self) -> Option<CellAddress> {
+        match self {
+            &ArgExpr(Cell(addr)) => Some(addr),
+            _ => None,
         }
     }
 }
@@ -1171,11 +1275,7 @@ fn render_arith_terms(t1: ArithTerm, t2: ArithTerm, t3: ArithTerm, formatter: &m
 fn format_data_model_opcode(name: &'static str, flag: bool, field: DataModelField, addr1: AddressOrValue, addr2: AddressOrValue, formatter: &mut Formatter) -> Result<(), FormatError> {
     "DATA".fmt(formatter);
     name.fmt(formatter);
-    if flag {
-        formatter.write_char('1');
-    } else {
-        formatter.write_char('0');
-    }
+    flag.as_value().fmt(formatter);
     let mut status = match field {
         DataModelNumber => "N",
         DataModelLabel => "L",
@@ -1193,6 +1293,26 @@ fn format_data_model_opcode(name: &'static str, flag: bool, field: DataModelFiel
     }
     return status;
 }
+
+#[allow(unused_must_use)]
+fn format_table_opcode(name: &'static str, flag: bool, p: CellAddress, x: AddressOrValue, y: Value, z: Value, formatter: &mut Formatter) -> Result<(), FormatError> {
+    "TABLE".fmt(formatter);
+    name.fmt(formatter);
+    if flag {
+        "V".fmt(formatter);
+    } else {
+        "D".fmt(formatter);
+    }
+    formatter.write_char(' ');
+    p.fmt(formatter);
+    ", ".fmt(formatter);
+    x.fmt(formatter);
+    ", ".fmt(formatter);
+    y.fmt(formatter);
+    ", ".fmt(formatter);
+    z.fmt(formatter)
+}
+
 
 impl Show for Instruction {
     #[allow(unused_must_use)]
@@ -1320,6 +1440,11 @@ impl Show for Instruction {
             &DataRun(flag,field,addr1,addr2) => format_data_model_opcode("RUN", flag, field, addr1, addr2, formatter),
             &DataPut(flag,field,addr1,addr2) => format_data_model_opcode("PUT", flag, field, addr1, addr2, formatter),
             &DataGet(flag,field,addr1,addr2) => format_data_model_opcode("GET", flag, field, addr1, addr2, formatter),
+            &Table(flag,TableSearch,p,x,y,z)           => format_table_opcode("SEARCH", flag, p, x, y, z, formatter),
+            &Table(flag,TableSearchRange,p,x,y,z)      => format_table_opcode("RANGE",  flag, p, x, y, z, formatter),
+            &Table(flag,TableSearchRangePairs,p,x,y,z) => format_table_opcode("RANGEP", flag, p, x, y, z, formatter),
+            &Table(flag,TableTransfer,p,x,y,z)         => format_table_opcode("XFER",   flag, p, x, y, z, formatter),
+            &Table(flag,TableTransferReverse,p,x,y,z)  => format_table_opcode("RXFER",  flag, p, x, y, z, formatter),
             &Unrecognised(v0, v1, v2, v3) => {
                 "RAW".fmt(formatter);
                 formatter.write_char(' ');

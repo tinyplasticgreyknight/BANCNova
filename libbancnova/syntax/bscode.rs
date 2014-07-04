@@ -312,6 +312,16 @@ impl ToValue for int {
     }
 }
 
+impl ToValue for bool {
+    fn as_value(&self) -> Value {
+        if *self {
+            One::one()
+        } else {
+            Zero::zero()
+        }
+    }
+}
+
 #[test]
 fn syntax_tree() {
     let mut tree = Tree::new();
