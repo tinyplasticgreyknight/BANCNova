@@ -9,6 +9,8 @@ use syntax::tree::{TreeNode};
 #[cfg(test)]
 use syntax::tree::{Tree};
 use std::num::Zero;
+#[cfg(test)]
+use std::num::One;
 
 #[deriving(PartialEq,Eq)]
 pub enum Expression {
@@ -1462,9 +1464,9 @@ impl Show for Instruction {
 
 #[test]
 fn parse_newpage() {
-    let bsinst = bscode::Instruction::new(2999,0,0,0);
+    let bsinst = bscode::Instruction::new(2999,0,0,1);
     let inst = Instruction::from_bscode(&bsinst);
-    assert_eq!(inst, NewPage);
+    assert_eq!(inst, NewPage(One::one()));
 }
 #[test]
 fn parse_block_end() {
@@ -1481,9 +1483,9 @@ fn parse_reverse_block_end() {
 
 #[test]
 fn renderbs_newpage_inst() {
-    let inst = NewPage;
+    let inst = NewPage(One::one());
     let bscode = inst.as_bscode();
-    assert_eq!(bscode, bscode::Instruction::new(2999,0,0,0));
+    assert_eq!(bscode, bscode::Instruction::new(2999,0,0,1));
 }
 #[test]
 fn renderbs_simple_cond_unary() {
