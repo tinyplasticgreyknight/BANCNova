@@ -1,3 +1,4 @@
 *~
 *.o
 bin/*
+test_data/*.out
