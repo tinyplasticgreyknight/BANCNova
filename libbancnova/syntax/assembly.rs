@@ -4,7 +4,7 @@ use syntax::bscode;
 use syntax::bscode::{Value, CellAddress, ToValue};
 use result::BancResult;
 use syntax::tokenize;
-use syntax::tokenize::{Tokenizer, Token, Name, IntegerLiteral, Comma, Newline, OpenBracket, CloseBracket, OperToken};
+use syntax::tokenize::{Tokenizer, Token, Name, IntegerLiteral, Comma, Newline, OpenBracket, CloseBracket, OperToken, NothingMarker};
 use syntax::tree::{TreeNode};
 #[cfg(test)]
 use syntax::tree::{Tree};
@@ -53,6 +53,7 @@ pub enum ArithOperator {
 }
 #[deriving(PartialEq,Eq)]
 pub enum ArithTerm {
+    ArithEmpty,
     ArithCell(ArithOperator, CellAddress),
     ArithImmediate(ArithOperator, Value),
 }
@@ -115,10 +116,22 @@ pub enum Instruction {
     SetVideo(Value),
     AutoSolve,
     AutoSave,
-    DataRun(bool, DataModelField, AddressOrValue, AddressOrValue),
-    DataPut(bool, DataModelField, AddressOrValue, AddressOrValue),
-    DataGet(bool, DataModelField, AddressOrValue, AddressOrValue),
+    DataRun(bool, DataModelField, Option<CellAddress>, Option<CellAddress>),
+    DataPut(bool, DataModelField, Option<CellAddress>, Option<CellAddress>),
+    DataGet(bool, DataModelField, Option<CellAddress>, Option<CellAddress>),
     Arithmetic(CellAddress, ArithTerm, ArithTerm, ArithTerm),
+    SetZero(CellAddress),
+    Clear(CellAddress),
+    ArithmeticLen(CellAddress, AddressOrValue),
+    ArithmeticPow(CellAddress, AddressOrValue, AddressOrValue, ArithTerm),
+    ArithmeticSubstr(CellAddress, AddressOrValue, AddressOrValue, AddressOrValue),
+    GetSystemTime(CellAddress, ArithTerm),
+    ArithmeticLog(CellAddress, AddressOrValue, ArithTerm, ArithTerm),
+    ArithmeticTrunc(CellAddress, AddressOrValue, ArithTerm, ArithTerm),
+    Date365(CellAddress, AddressOrValue, AddressOrValue),
+    Date360(CellAddress, AddressOrValue, AddressOrValue),
+    DateDiff(CellAddress, AddressOrValue, AddressOrValue),
+    DateFoo(CellAddress, AddressOrValue, AddressOrValue),
     Table(bool, TableMode, CellAddress, AddressOrValue, Value, Value),
 }
 
@@ -367,20 +380,25 @@ impl ArithTerm {
         let aoper = ArithOperator::from_bscode(val % 10);
         if aoper.is_none() { return None; }
         let aoper = aoper.unwrap();
-        let val = val - (val%10);
-        match val {
-            0..20000 => {
-                Some(ArithCell(aoper, CellAddress::new(val/10)))
+        let aval = val - (val%10);
+        match aval/10 {
+            0 => {
+                Some(ArithEmpty)
             },
-            20001..21999 => None,
-            _ => {
-                let val = (val-22000)/10;
-                Some(ArithImmediate(aoper, (val as int).as_value()))
+            r@1..2000 => {
+                Some(ArithCell(aoper, CellAddress::new(r)))
+            },
+            2001..2199 => None,
+            r => {
+                Some(ArithImmediate(aoper, ((r-2200) as int).as_value()))
             },
         }
     }
 
     fn parse<R: Reader>(init_token: Token, tokenizer: &mut Tokenizer<R>) -> BancResult<ArithTerm> {
+        if init_token == NothingMarker {
+            return Ok(ArithEmpty);
+        }
         let op = ArithOperator::parse_token(init_token);
         let open_paren = tokenizer.get_token();
         let subarg = Expression::parse(None, tokenizer);
@@ -410,6 +428,7 @@ impl ArithTerm {
 
     fn effective(&self) -> bool {
         match self {
+            &ArithEmpty => false,
             &ArithCell(_, _) => true,
             &ArithImmediate(Add, v) if v.as_i16() == 0 => false,
             &ArithImmediate(Subtract, v) if v.as_i16() == 0 => false,
@@ -418,11 +437,16 @@ impl ArithTerm {
             _ => true,
         }
     }
+
+    fn null() -> ArithTerm {
+        ArithImmediate(Add, Zero::zero())
+    }
 }
 
 impl ToValue for ArithTerm {
     fn as_value(&self) -> Value {
         match self {
+            &ArithEmpty => ArithTerm::null().as_value(),
             &ArithCell(op, addr) => ((addr*10) + op).as_value(),
             &ArithImmediate(op, val) => (val*10) + 22000 + op,
         }
@@ -433,6 +457,9 @@ impl Show for ArithTerm {
     #[allow(unused_must_use)]
     fn fmt(&self, formatter: &mut Formatter) -> Result<(), FormatError> {
         match self {
+            &ArithEmpty => {
+                NothingMarker.fmt(formatter)
+            },
             &ArithCell(op, addr) => {
                 op.fmt(formatter);
                 formatter.write_char('(');
@@ -757,10 +784,8 @@ impl Instruction {
             9001 if all_args_zero => AutoSave,
             9200|9201|9300|9301|9400|9401 => {
                 let flag = opcode%10 == 1;
-                // TODO: what does it really mean when the addr arguments are > 2000 ?
-                // is it really a numeric literal?  not convinced
-                match (DataModelField::new(a), AddressOrValue::from_value(b), AddressOrValue::from_value(c)) {
-                    (Some(field), Some(addr1), Some(addr2)) => match opcode {
+                match (DataModelField::new(a), CellAddress::from_value(b), CellAddress::from_value(c)) {
+                    (Some(field), addr1, addr2) => match opcode {
                         9200|2301 => DataRun(flag, field, addr1, addr2),
                         9300|9301 => DataPut(flag, field, addr1, addr2),
                         9400|9401 => DataGet(flag, field, addr1, addr2),
@@ -847,7 +872,7 @@ impl Instruction {
             "MTASKMENU" => Ok(GotoSpecial(MultitaskMenu)),
             "GOSTORAGE" => Ok(GotoSpecial(Storage)),
             "GOPRODUCT" => Ok(GotoSpecial(ProductSales)),
-            _ => Err("not a valid opcode"),
+            _ => Err("not a valid nullary opcode"),
         }
     }
 
@@ -863,77 +888,58 @@ impl Instruction {
 
     pub fn parse_raw(args: Vec<Argument>) -> BancResult<Instruction> {
         if args.len() != 4 {
-            return Err("RAW statement must have exactly four arguments");
+            return Err("expected RAW statement to have exactly four arguments");
         }
-        let mut vargs: Vec<Value> = vec!();
-        for expr in args.iter() {
-            match expr {
-                &ArgExpr(Immediate(v)) => vargs.push(v),
-                _ => { return Err("RAW statement must use explicit numeric arguments"); },
-            }
+        let v0 = args.get(0).as_maybe_value();
+        let v1 = args.get(1).as_maybe_value();
+        let v2 = args.get(2).as_maybe_value();
+        let v3 = args.get(3).as_maybe_value();
+        match (v0, v1, v2, v3) {
+            (Some(v0), Some(v1), Some(v2), Some(v3)) => Ok(Unrecognised(v0, v1, v2, v3)),
+            _ => Err("expected RAW <int>, <int>, <int>, <int>")
         }
-        Ok(Unrecognised(
-                *vargs.get(0),
-                *vargs.get(1),
-                *vargs.get(2),
-                *vargs.get(3)
-        ))
     }
 
     pub fn parse_datamodel(name: String, arg1: &Argument, arg2: &Argument) -> BancResult<Instruction> {
-        let addr1: AddressOrValue = match arg1.as_address_or_value() {
-            Some(foo) => foo,
-            _ => { return Err("first argument for datamodel command must be cell"); },
-        };
-        let addr2: AddressOrValue = match arg2.as_address_or_value() {
-            Some(foo) => foo,
-            _ => { return Err("second argument for datamodel command must be cell"); },
-        };
+        let addr1 = arg1.as_address();
+        let addr2 = arg2.as_address();
         let name = name.as_slice();
         let field =
         if name.ends_with("N") {
-            DataModelNumber
+            Some(DataModelNumber)
         } else if name.ends_with("L") {
-            DataModelLabel
+            Some(DataModelLabel)
         } else if name.ends_with("V") {
-            DataModelValue
+            Some(DataModelValue)
         } else {
-            return Err("unrecognised data model field");
+            None
         };
         let flag =
         match name.char_at(7) {
-            '0' => false,
-            '1' => true,
-            _ => { return Err("unrecognised data model offset"); },
+            '0' => Some(false),
+            '1' => Some(true),
+            _ => None,
         };
-        if name.starts_with("DATARUN") {
-            Ok(DataRun(flag, field, addr1, addr2))
-        } else if name.starts_with("DATAPUT") {
-            Ok(DataPut(flag, field, addr1, addr2))
-        } else if name.starts_with("DATAGET") {
-            Ok(DataGet(flag, field, addr1, addr2))
-        } else {
-            Err("unrecognised data model command")
+        match (flag, field, addr1, addr2) {
+            (Some(flag), Some(field), addr1, addr2) =>
+                if name.starts_with("DATARUN") {
+                    Ok(DataRun(flag, field, addr1, addr2))
+                } else if name.starts_with("DATAPUT") {
+                    Ok(DataPut(flag, field, addr1, addr2))
+                } else if name.starts_with("DATAGET") {
+                    Ok(DataGet(flag, field, addr1, addr2))
+                } else {
+                    Err("expected DATA{RUN|PUT|GET}")
+                },
+            _ => Err("expected DATA{RUN|PUT|GET}{0|1}{N|L|V} [<cell>[, <cell>]]")
         }
     }
 
     pub fn parse_table(name: String, p: &Argument, x: &Argument, y: &Argument, z: &Argument) -> BancResult<Instruction> {
-        let p: CellAddress = match p.as_address() {
-            Some(addr) => addr,
-            _ => { return Err("first argument for table command must be cell"); },
-        };
-        let x: AddressOrValue = match x.as_address_or_value() {
-            Some(foo) => foo,
-            _ => { return Err("second argument for table command must be cell or number"); },
-        };
-        let y: Value = match y.as_maybe_value() {
-            Some(v) => v,
-            _ => { return Err("third argument for table command must be number"); },
-        };
-        let z: Value = match z.as_maybe_value() {
-            Some(v) => v,
-            _ => { return Err("fourth argument for table command must be number"); },
-        };
+        let p = p.as_address();
+        let x = x.as_address_or_value();
+        let y = y.as_maybe_value();
+        let z = z.as_maybe_value();
         let name = name.as_slice();
         let flag =
         if name.ends_with("D") {
@@ -959,9 +965,9 @@ impl Instruction {
             None
         };
 
-        match (flag, mode) {
-            (Some(flag), Some(mode)) => Ok(Table(flag, mode, p, x, y, z)),
-            _ => Err("unrecognised table command"),
+        match (flag, mode, p, x, y, z) {
+            (Some(flag), Some(mode), Some(p), Some(x), Some(y), Some(z)) => Ok(Table(flag, mode, p, x, y, z)),
+            _ => Err("expected TABLE{SEARCH|RANGE|RANGEP|XFER|RXFER}{D|V} <cell>, {<int>|<cell>}, <int>, <int>"),
         }
     }
 
@@ -969,125 +975,87 @@ impl Instruction {
         if args.len() != 4 {
             return Err("wrong number of arguments");
         }
-        let targs = (args.get(0), args.get(1), args.get(2), args.get(3));
-        let vargs: Vec<Option<Value>> = args.iter().map(|a| match a {
-                &ArgExpr(Immediate(v)) => Some(v),
-                &ArgEmpty => Some(Zero::zero()),
-                _ => None,
-            }).collect();
         match name.as_slice() {
             "SHOW" => {
-                let addr = match args.get(0) {
-                    &ArgExpr(Cell(addr)) => addr,
-                    _ => { return Err("SHOW must have an address for its first argument") },
-                };
-                let p1 = match args.get(1) {
-                    &ArgExpr(Immediate(v)) => Position::from_packed(v),
-                    &ArgEmpty => Zero::zero(),
-                    _ => { return Err("SHOW must have a number for its second argument"); }
-                };
-                let r = match vargs.get(2) {
-                    &Some(v) => v,
-                    _ => { return Err("SHOW must have a number for its third argument") },
-                };
-                let p2 = match args.get(3) {
-                    &ArgExpr(Immediate(v)) => Position::from_packed(v),
-                    &ArgEmpty => Zero::zero(),
-                    _ => { return Err("SHOW must have a number for its fourth argument"); }
-                };
-                Ok(ShowPrompt(addr, p1, r, p2))
+                let addr = args.get(0).as_address();
+                let p1 = args.get(1).as_packed_position();
+                let r = args.get(2).as_maybe_value();
+                let p2 = args.get(3).as_packed_position();
+                match (addr, p1, r, p2) {
+                    (Some(addr), Some(p1), Some(r), Some(p2)) => Ok(ShowPrompt(addr, p1, r, p2)),
+                    _ => Err("expected SHOW <cell>, <packedpos>, <int>, <packedpos>"),
+                }
             },
             "NEWPAGE" => {
-                let v = match args.get(0) {
-                    &ArgExpr(Immediate(v)) => v,
-                    &ArgEmpty => Zero::zero(),
-                    _ => { return Err("NEWPAGE must have either a number or nothing as its argument") },
-                };
-                Ok(NewPage(v))
+                match args.get(0).as_maybe_value() {
+                    Some(v) => Ok(NewPage(v)),
+                    _ => Err("expected NEWPAGE [<int>]"),
+                }
             },
             "SET" => {
-                let addr = match args.get(0) {
-                    &ArgExpr(Cell(addr)) => addr,
-                    _ => { return Err("SET must have an address for its first argument"); },
-                };
-                let mut arithargs: Vec<ArithTerm> = vec!();
-                for arg in args.tail().iter() {
-                    match arg {
-                        &ArgEmpty => arithargs.push(ArithImmediate(Add, Zero::zero() )),
-                        &ArgArith(at) => arithargs.push(at),
-                        _ => { return Err("SET must have arithterms for arguments"); },
-                    }
+                let addr = args.get(0).as_address();
+                let av1 = args.get(1).as_address_or_value();
+                let t1 = args.get(1).as_arithterm();
+                let t2 = args.get(2).as_arithterm();
+                let t3 = args.get(3).as_arithterm();
+                match (addr, av1, t1, t2, t3) {
+                    (Some(addr), Some(EAddress(a1)), None, Some(t2), Some(t3)) => Ok(Arithmetic(addr, ArithCell(Add, a1), t2, t3)),
+                    (Some(addr), Some(EValue(v1)), None, Some(t2), Some(t3)) => Ok(Arithmetic(addr, ArithImmediate(Add, v1), t2, t3)),
+                    (Some(addr), None, Some(t1), Some(t2), Some(t3)) => Ok(Arithmetic(addr, t1, t2, t3)),
+                    _ => Err("expected SET <cell>, {<cell>|<int>|<arithterm>}[, <arithterm>[, <arithterm>]]")
                 }
-                Ok(Arithmetic(addr, *arithargs.get(0), *arithargs.get(1), *arithargs.get(2)))
             },
             "WINDOW" => {
-                let clr = match vargs.get(0) {
-                    &Some(v) => v,
-                    _ => { return Err("WINDOW must have a number for its first argument") },
-                };
-                let p1 = match args.get(1) {
-                    &ArgExpr(Immediate(v)) => Position::from_packed(v),
-                    &ArgEmpty => Zero::zero(),
-                    _ => { return Err("SHOW must have a number for its second argument"); }
-                };
-                let p2 = match args.get(2) {
-                    &ArgExpr(Immediate(v)) => Position::from_packed(v),
-                    &ArgEmpty => Zero::zero(),
-                    _ => { return Err("SHOW must have a number for its third argument"); }
-                };
-                Ok(Window(clr, p1, p2))
+                let clr = args.get(0).as_maybe_value();
+                let p1 = args.get(1).as_packed_position();
+                let p2 = args.get(2).as_packed_position();
+                match (clr, p1, p2) {
+                    (Some(clr), Some(p1), Some(p2)) => Ok(Window(clr, p1, p2)),
+                    _ => Err("expected WINDOW <clrpair>, <packedpos>, <packedpos>")
+                }
             },
             "GOTO" => {
-                match targs {
-                    (&ArgExpr(Immediate(v)), &ArgEmpty, &ArgEmpty, &ArgEmpty) => {
-                        match v.as_i16() {
-                            0..500 => Ok(GotoPage(v)),
-                            _ => Err("GOTO can only go to pages up to 500"),
-                        }
+                // can be either an address or a value
+                let addr = args.get(0).as_address();
+                let num = args.get(0).as_maybe_value();
+                match (addr, num) {
+                    (Some(addr), None) => Ok(GotoPrompt(addr)),
+                    (None, Some(v)) => match v.as_i16() {
+                        0..500 => Ok(GotoPage(v)),
+                        _ => Err("expected GOTO argument in range [0, 500]")
                     },
-                    (&ArgExpr(Cell(addr)), &ArgEmpty, &ArgEmpty, &ArgEmpty) => {
-                        Ok(GotoPrompt(addr))
-                    },
-                    _ => Err("GOTO takes only a single argument (number or cell)"),
+                    _ => Err("expected GOTO {<int>|<cell>}")
                 }
             },
             "GOTOF" => {
-                match targs {
-                    (&ArgExpr(Immediate(v)), &ArgEmpty, &ArgEmpty, &ArgEmpty) => {
-                        match v.as_i16() {
-                            1..20 => Ok(GotoFKey(v)),
-                            _ => Err("GOTOF argument must be in [1, 20]"),
-                        }
+                match args.get(0).as_maybe_value() {
+                    Some(v) => match v.as_i16() {
+                        1..20 => Ok(GotoFKey(v)),
+                        _ => Err("expected GOTOF argument in range [1, 20]")
                     },
-                    _ => Err("GOTOF takes only a single numeric argument"),
+                    _ => Err("expected GOTOF <int>")
                 }
             },
             "GOTOTR" => {
-                match targs {
-                    (&ArgExpr(Immediate(v)), &ArgEmpty, &ArgEmpty, &ArgEmpty) => {
-                        match v.as_i16() {
-                            1..24 => Ok(GotoTransaction(v)),
-                            _ => Err("GOTOTR argument must be in [1, 24]"),
-                        }
+                match args.get(0).as_maybe_value() {
+                    Some(v) => match v.as_i16() {
+                        1..24 => Ok(GotoTransaction(v)),
+                        _ => Err("expected GOTOTR argument in range [1, 24]")
                     },
-                    _ => Err("GOTOTR takes only a single numeric argument"),
+                    _ => Err("expected GOTOTR <int>")
                 }
             },
             "SYSCALL" => {
-                match args.get(0) {
-                    &ArgExpr(Cell(addr)) => {
-                        Ok(SystemCall(addr))
-                    },
-                    _ => Err("SYSCALL needs a cell argument"),
+                match args.get(0).as_address() {
+                    Some(addr) => Ok(SystemCall(addr)),
+                    _ => Err("expected SYSCALL <cell>")
                 }
             },
             "VIDEOMODE" => {
-                let m = match args.get(0) {
-                    &ArgExpr(Immediate(v)) => v,
-                    &ArgEmpty => Zero::zero(),
-                    _ => { return Err("VIDEO must have a number as its argument") },
-                };
-                Ok(SetVideo(m))
+                match args.get(0).as_maybe_value() {
+                    Some(m) => Ok(SetVideo(m)),
+                    _ => Err("expected VIDEO <int>")
+                }
             },
             _ => {
                 if name.as_slice().starts_with("DATA") {
@@ -1095,7 +1063,12 @@ impl Instruction {
                 } else if name.as_slice().starts_with("TABLE") {
                     Instruction::parse_table(name, args.get(0), args.get(1), args.get(2), args.get(3))
                 } else {
-                    Err("unrecognised name")
+                    let count = args.iter().count(|a| a != &ArgEmpty);
+                    if count == 0 {
+                        Instruction::parse_noarg(name)
+                    } else {
+                        Err("not a valid opcode")
+                    }
                 }
             },
         }
@@ -1123,6 +1096,22 @@ impl Argument {
         match tok {
             Name(_) => ArithTerm::parse(tok, tokenizer).map(|x| ArgArith(x) ),
             a => Expression::parse(Some(a), tokenizer).map(|x| ArgExpr(x) ),
+        }
+    }
+
+    fn as_arithterm(&self) -> Option<ArithTerm> {
+        match self {
+            &ArgEmpty => Some(ArithEmpty),
+            &ArgArith(at) => Some(at),
+            _ => None,
+        }
+    }
+
+    fn as_packed_position(&self) -> Option<Position> {
+        match self {
+            &ArgExpr(Immediate(v)) => Some(Position::from_packed(v)),
+            &ArgEmpty => Some(Zero::zero()),
+            _ => None,
         }
     }
 
@@ -1229,14 +1218,7 @@ impl TreeNode for Instruction {
                 },
                 _ => {
                     match parse_arguments(tokenizer) {
-                        Ok(args) => {
-                            let count = args.iter().count(|a| a != &ArgEmpty);
-                            if count == 0 {
-                                Instruction::parse_noarg(name)
-                            } else {
-                                Instruction::parse_general(name, args)
-                            }
-                        },
+                        Ok(args) => Instruction::parse_general(name, args),
                         Err(e) => Err(e),
                     }
                 },
@@ -1254,46 +1236,51 @@ impl TreeNode for Instruction {
 
 #[allow(unused_must_use)]
 fn render_arith_terms(t1: ArithTerm, t2: ArithTerm, t3: ArithTerm, formatter: &mut Formatter) -> Result<(), FormatError> {
-    let p1 = t1.effective();
     let p2 = t2.effective();
     let p3 = t3.effective();
 
-    if p1 || p2 || p3 {
+    formatter.write_str(", ");
+    t1.fmt(formatter);
+    if p2 || p3 {
         formatter.write_str(", ");
-        t1.fmt(formatter);
-        if p2 || p3 {
+        t2.fmt(formatter);
+        if p3 {
             formatter.write_str(", ");
-            t2.fmt(formatter);
-            if p3 {
-                formatter.write_str(", ");
-                t3.fmt(formatter);
-            }
+            t3.fmt(formatter);
         }
     }
     Ok(())
 }
 
 #[allow(unused_must_use)]
-fn format_data_model_opcode(name: &'static str, flag: bool, field: DataModelField, addr1: AddressOrValue, addr2: AddressOrValue, formatter: &mut Formatter) -> Result<(), FormatError> {
+fn format_data_model_opcode(name: &'static str, flag: bool, field: DataModelField, addr1: Option<CellAddress>, addr2: Option<CellAddress>, formatter: &mut Formatter) -> Result<(), FormatError> {
     "DATA".fmt(formatter);
     name.fmt(formatter);
     flag.as_value().fmt(formatter);
-    let mut status = match field {
+    let status = match field {
         DataModelNumber => "N",
         DataModelLabel => "L",
         DataModelValue => "V",
     }.fmt(formatter);
 
-    if addr1.is_zero() && addr2.is_zero() {
-        return status;
+    match (addr1, addr2) {
+        (None, None) => status,
+        (Some(addr1), Some(addr2)) => {
+            formatter.write_char(' ');
+            addr1.fmt(formatter);
+            ", ".fmt(formatter);
+            addr2.fmt(formatter)
+        },
+        (None, Some(addr2)) => {
+            formatter.write_char(' ');
+            "0, ".fmt(formatter);
+            addr2.fmt(formatter)
+        },
+        (Some(addr1), None) => {
+            formatter.write_char(' ');
+            addr1.fmt(formatter)
+        },
     }
-    formatter.write_char(' ');
-    status = addr1.fmt(formatter);
-    if ! addr2.is_zero() {
-        ", ".fmt(formatter);
-        status = addr2.fmt(formatter);
-    }
-    return status;
 }
 
 #[allow(unused_must_use)]
@@ -1314,7 +1301,6 @@ fn format_table_opcode(name: &'static str, flag: bool, p: CellAddress, x: Addres
     ", ".fmt(formatter);
     z.fmt(formatter)
 }
-
 
 impl Show for Instruction {
     #[allow(unused_must_use)]
@@ -1350,6 +1336,132 @@ impl Show for Instruction {
                 formatter.write_char(' ');
                 addr.fmt(formatter);
                 render_arith_terms(t1, t2, t3, formatter)
+            },
+            &SetZero(addr) => {
+                "SETZERO".fmt(formatter);
+                formatter.write_char(' ');
+                addr.fmt(formatter)
+            },
+            &Clear(addr) => {
+                "CLEAR".fmt(formatter);
+                formatter.write_char(' ');
+                addr.fmt(formatter)
+            },
+            &ArithmeticLen(addr, arg) => {
+                "LEN".fmt(formatter);
+                formatter.write_char(' ');
+                addr.fmt(formatter);
+                ", ".fmt(formatter);
+                arg.fmt(formatter)
+            },
+            &ArithmeticPow(addr, arg1, arg2, term) => {
+                "POW".fmt(formatter);
+                formatter.write_char(' ');
+                addr.fmt(formatter);
+                ", ".fmt(formatter);
+                arg1.fmt(formatter);
+                ", ".fmt(formatter);
+                let mut result = arg2.fmt(formatter);
+                if term != ArithEmpty {
+                    ", ".fmt(formatter);
+                    result = term.fmt(formatter);
+                }
+                return result;
+            },
+            &ArithmeticSubstr(addr, arg1, arg2, arg3) => {
+                "SUBSTR".fmt(formatter);
+                formatter.write_char(' ');
+                addr.fmt(formatter);
+                ", ".fmt(formatter);
+                arg1.fmt(formatter);
+                ", ".fmt(formatter);
+                arg2.fmt(formatter);
+                ", ".fmt(formatter);
+                arg3.fmt(formatter)
+            },
+            &GetSystemTime(addr, term) => {
+                "TIME".fmt(formatter);
+                formatter.write_char(' ');
+                let mut result = addr.fmt(formatter);
+                if term != ArithEmpty {
+                    ", ".fmt(formatter);
+                    result = term.fmt(formatter);
+                }
+                return result;
+            },
+            &ArithmeticLog(addr, arg, term1, term2) => {
+                "LOG".fmt(formatter);
+                formatter.write_char(' ');
+                addr.fmt(formatter);
+                ", ".fmt(formatter);
+                let mut result = arg.fmt(formatter);
+                if term1 == ArithEmpty && term2 == ArithEmpty {
+                    return result;
+                }
+                result = ", ".fmt(formatter);
+                if term1 != ArithEmpty {
+                    result = term1.fmt(formatter);
+                }
+                if term2 != ArithEmpty {
+                    ", ".fmt(formatter);
+                    result = term2.fmt(formatter);
+                }
+                return result;
+            },
+            &ArithmeticTrunc(addr, arg, term1, term2) => {
+                "TRUNC".fmt(formatter);
+                formatter.write_char(' ');
+                addr.fmt(formatter);
+                ", ".fmt(formatter);
+                let mut result = arg.fmt(formatter);
+                if term1 == ArithEmpty && term2 == ArithEmpty {
+                    return result;
+                }
+                result = ", ".fmt(formatter);
+                if term1 != ArithEmpty {
+                    result = term1.fmt(formatter);
+                }
+                if term2 != ArithEmpty {
+                    ", ".fmt(formatter);
+                    result = term2.fmt(formatter);
+                }
+                return result;
+            },
+            &Date365(addr, arg1, arg2) => {
+                "DATE365".fmt(formatter);
+                formatter.write_char(' ');
+                addr.fmt(formatter);
+                ", ".fmt(formatter);
+                arg1.fmt(formatter);
+                ", ".fmt(formatter);
+                arg2.fmt(formatter)
+            },
+            &Date360(addr, arg1, arg2) => {
+                "DATE360".fmt(formatter);
+                formatter.write_char(' ');
+                addr.fmt(formatter);
+                ", ".fmt(formatter);
+                arg1.fmt(formatter);
+                ", ".fmt(formatter);
+                arg2.fmt(formatter)
+            },
+            &DateDiff(addr, arg1, arg2) => {
+                "DATEDIFF".fmt(formatter);
+                formatter.write_char(' ');
+                addr.fmt(formatter);
+                ", ".fmt(formatter);
+                arg1.fmt(formatter);
+                ", ".fmt(formatter);
+                arg2.fmt(formatter)
+            },
+            &DateFoo(addr, arg1, arg2) => {
+                "DATEFOO".fmt(formatter);
+                formatter.write_char(' ');
+                addr.fmt(formatter);
+                ", ".fmt(formatter);
+                arg1.fmt(formatter);
+                ", ".fmt(formatter);
+                arg2.fmt(formatter)
             },
             &NewPage(v) => {
                 let mut status = "NEWPAGE".fmt(formatter);

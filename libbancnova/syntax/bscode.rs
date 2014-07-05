@@ -30,8 +30,8 @@ impl CellAddress {
         match Value::parse(text) {
             Ok(v) => {
                 let i = v.as_i16();
-                if i < 0 || i >= 2000 {
-                    Err("cell address must be in the range [0, 2000]")
+                if i < 1 || i >= 2000 {
+                    Err("cell address must be in the range [1, 2000]")
                 } else {
                     Ok(CellAddress::new(i))
                 }
@@ -63,8 +63,11 @@ impl CellAddress {
         }
     }
 
-    pub fn as_value(&self) -> Value {
-        Value::new(self.a)
+    pub fn from_value(v: Value) -> Option<CellAddress> {
+        match v.as_i16() {
+            a @ 1..2000 => Some(CellAddress::new(a)),
+            _ => None
+        }
     }
 }
 
@@ -303,6 +306,15 @@ impl ToValue for Value {
 impl ToValue for CellAddress {
     fn as_value(&self) -> Value {
         Value::new(self.a)
+    }
+}
+
+impl<T: ToValue> ToValue for Option<T> {
+    fn as_value(&self) -> Value {
+        match self {
+            &Some(ref v) => v.as_value(),
+            &None => Zero::zero(),
+        }
     }
 }
 
