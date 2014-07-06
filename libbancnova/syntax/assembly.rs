@@ -51,6 +51,10 @@ pub enum ArithOperator {
     TruncateInt,
     Date,
 }
+struct ArithRaw {
+    op: i16,
+    main: i16,
+}
 #[deriving(PartialEq,Eq)]
 pub enum ArithTerm {
     ArithEmpty,
@@ -120,12 +124,14 @@ pub enum Instruction {
     DataPut(bool, DataModelField, Option<CellAddress>, Option<CellAddress>),
     DataGet(bool, DataModelField, Option<CellAddress>, Option<CellAddress>),
     Arithmetic(CellAddress, ArithTerm, ArithTerm, ArithTerm),
+    ArithmeticSet(CellAddress, AddressOrValue, ArithTerm, ArithTerm),
+    ArithmeticSetNeg(CellAddress, AddressOrValue, ArithTerm, ArithTerm),
     SetZero(CellAddress),
-    Clear(CellAddress),
-    ArithmeticLen(CellAddress, AddressOrValue),
+    Clear(CellAddress, CellAddress, ArithTerm, ArithTerm),
+    ArithmeticLen(CellAddress, AddressOrValue, ArithTerm, ArithTerm),
     ArithmeticPow(CellAddress, AddressOrValue, AddressOrValue, ArithTerm),
-    ArithmeticSubstr(CellAddress, AddressOrValue, AddressOrValue, AddressOrValue),
-    GetSystemTime(CellAddress, ArithTerm),
+    ArithmeticSubstr(CellAddress, CellAddress, AddressOrValue, AddressOrValue),
+    GetSystemTime(CellAddress, CellAddress, ArithTerm),
     ArithmeticLog(CellAddress, AddressOrValue, ArithTerm, ArithTerm),
     ArithmeticTrunc(CellAddress, AddressOrValue, ArithTerm, ArithTerm),
     Date365(CellAddress, AddressOrValue, AddressOrValue),
@@ -277,6 +283,13 @@ impl AddressOrValue {
             _ => None,
         }
     }
+
+    fn as_term_value(&self) -> Value {
+        match self {
+            &EAddress(addr) => addr.as_value(),
+            &EValue(v) => v+2200
+        }
+    }
 }
 
 impl Show for AddressOrValue {
@@ -374,27 +387,61 @@ impl BinaryComparator {
     }
 }
 
-impl ArithTerm {
-    fn from_bscode(n: Value) -> Option<ArithTerm> {
+impl ArithRaw {
+    fn new(n: Value) -> ArithRaw {
         let val = n.as_i16();
-        let aoper = ArithOperator::from_bscode(val % 10);
-        if aoper.is_none() { return None; }
-        let aoper = aoper.unwrap();
-        let aval = val - (val%10);
-        match aval/10 {
-            0 => {
-                Some(ArithEmpty)
-            },
-            r@1..2000 => {
-                Some(ArithCell(aoper, CellAddress::new(r)))
-            },
-            2001..2199 => None,
-            r => {
-                Some(ArithImmediate(aoper, ((r-2200) as int).as_value()))
-            },
+        let op = val % 10;
+        let aval = (val - op)/10;
+        ArithRaw { op: op, main: aval }
+    }
+
+    fn combine<T1: ToPrimitive>(op: T1, main: AddressOrValue) -> Option<ArithRaw> {
+        match (op.to_i16(), main.as_term_value().to_i16()) {
+            (Some(op), Some(main)) => Some(ArithRaw { op: op, main: main }),
+            _ => None
         }
     }
 
+    fn as_address_or_value(&self) -> Option<AddressOrValue> {
+        match (self.as_address(), self.as_maybe_value()) {
+            (Some(addr), _) => Some(EAddress(addr)),
+            (_, Some(v)) => Some(EValue(v)),
+            _ => None,
+        }
+    }
+
+    fn as_address(&self) -> Option<CellAddress> {
+        match self.main {
+            r@1..2000 => Some(CellAddress::new(r)),
+            _ => None
+        }
+    }
+
+    fn as_maybe_value(&self) -> Option<Value> {
+        match self.as_address() {
+            Some(_) => None,
+            None => Some(Value::new(self.main - 2200)),
+        }
+    }
+
+    fn as_term(&self) -> Option<ArithTerm> {
+        match (self.main, ArithOperator::from_bscode(self.op), self.as_maybe_value(), self.as_address()) {
+            (0, _, _, _) => Some(ArithEmpty),
+            (1..2000, Some(op), _, Some(addr)) => Some(ArithCell(op, addr)),
+            (2001..2199, _, _, _) => None,
+            (_, Some(op), Some(v), _) => Some(ArithImmediate(op, v)),
+            _ => None,
+        }
+    }
+}
+
+impl ToValue for ArithRaw {
+    fn as_value(&self) -> Value {
+        Value::new(self.op + 10*self.main)
+    }
+}
+
+impl ArithTerm {
     fn parse<R: Reader>(init_token: Token, tokenizer: &mut Tokenizer<R>) -> BancResult<ArithTerm> {
         if init_token == NothingMarker {
             return Ok(ArithEmpty);
@@ -426,6 +473,13 @@ impl ArithTerm {
         }
     }
 
+    fn new(op: ArithOperator, content: AddressOrValue) -> ArithTerm {
+        match content {
+            EAddress(addr) => ArithCell(op, addr),
+            EValue(v) => ArithImmediate(op, v),
+        }
+    }
+
     fn effective(&self) -> bool {
         match self {
             &ArithEmpty => false,
@@ -440,6 +494,10 @@ impl ArithTerm {
 
     fn null() -> ArithTerm {
         ArithImmediate(Add, Zero::zero())
+    }
+
+    fn is_null(&self) -> bool {
+        ! self.effective()
     }
 }
 
@@ -685,19 +743,60 @@ fn conditional_as_bscode(inst: &Instruction) -> Option<bscode::Instruction> {
     }
 }
 
+fn arithmetic_from_raw(addr: CellAddress, a: ArithRaw, b: ArithRaw, c: ArithRaw) -> Option<Instruction> {
+    let (aop, bop) = (a.op, b.op);
+    match aop {
+        5 => match (a.as_address(), b.as_term(), c.as_term()) {
+            (Some(a), Some(b), Some(c)) => Some(Clear(addr, a, b, c)),
+            _ => None
+        },
+        6 => match bop {
+            1..4 => match (a.as_address_or_value(), b.as_address_or_value(), c.as_term()) {
+                (Some(a), Some(b), Some(c)) => Some(ArithmeticPow(addr, a, b, c)),
+                _ => None
+            },
+            5 => match (a.as_address(), b.as_address_or_value(), c.as_address_or_value()) {
+                (Some(a), Some(b), Some(c)) => Some(ArithmeticSubstr(addr, a, b, c)),
+                _ => None
+            },
+            6 => match (a.as_address(), c.as_term()) {
+                (Some(a), Some(c)) => Some(GetSystemTime(addr, a, c)),
+                _ => None
+            },
+            _ => None
+        },
+        0..4|7|8 => match (aop, a.as_address_or_value(), b.as_term(), c.as_term()) {
+            (0, Some(a), Some(b), Some(c)) => Some(ArithmeticLen(addr, a, b, c)),
+            (1, Some(a), Some(b), Some(c)) => Some(ArithmeticSetNeg(addr, a, b, c)),
+            (2..4, Some(a), Some(b), Some(c)) => Some(ArithmeticSet(addr, a, b, c)),
+            (7, Some(a), Some(b), Some(c)) => Some(ArithmeticLog(addr, a, b, c)),
+            (8, Some(a), Some(b), Some(c)) => Some(ArithmeticTrunc(addr, a, b, c)),
+            _ => None
+        },
+        9 => match (a.as_address_or_value(), b.as_address_or_value()) {
+            (Some(a), Some(b)) => match bop {
+                1 => Some(Date365(addr, a, b)),
+                2 => Some(Date360(addr, a, b)),
+                3 => Some(DateDiff(addr, a, b)),
+                4 => Some(DateFoo(addr, a, b)),
+                _ => None
+            },
+            _ => None
+        },
+        _ => None
+    }
+}
+
 fn arithmetic_from_bscode(opcode: Value, a: Value, b: Value, c: Value) -> Option<Instruction> {
     let iopcode = opcode.as_i16();
     if iopcode <= 10000 || iopcode >= 12000 {
         return None;
     }
     let addr = CellAddress::new((opcode + (-10000)).as_i16());
-    let oa = ArithTerm::from_bscode(a);
-    let ob = ArithTerm::from_bscode(b);
-    let oc = ArithTerm::from_bscode(c);
-    match (oa, ob, oc) {
-        (Some(a), Some(b), Some(c)) => Some(Arithmetic(addr, a, b, c)),
-        _ => None,
-    }
+    let a = ArithRaw::new(a);
+    let b = ArithRaw::new(b);
+    let c = ArithRaw::new(c);
+    arithmetic_from_raw(addr, a, b, c)
 }
 
 impl DataModelField {
@@ -846,13 +945,28 @@ impl Instruction {
             &DataPut(flag,field,addr1,addr2) => bscode::Instruction::new(flag.as_value()+9300, field.as_value(), addr1.as_value(), addr2.as_value()),
             &DataGet(flag,field,addr1,addr2) => bscode::Instruction::new(flag.as_value()+9400, field.as_value(), addr1.as_value(), addr2.as_value()),
             &Arithmetic(addr, t1, t2, t3) => bscode::Instruction::new(addr+10000,t1,t2,t3),
+            &Clear(dest, addr, t1, t2) => bscode::Instruction::new(dest+10000, ArithRaw::combine(5, EAddress(addr)), t1, t2),
+            &ArithmeticSet(dest, av1, t2, t3) => bscode::Instruction::new(dest+10000, ArithRaw::combine(2,av1),t2,t3),
+            &ArithmeticSetNeg(dest, av1, t2, t3) => bscode::Instruction::new(dest+10000, ArithRaw::combine(1,av1),t2,t3),
+            &ArithmeticLen(dest, av1, t2, t3) => bscode::Instruction::new(dest+10000, ArithRaw::combine(0,av1),t2,t3),
+            &ArithmeticSubstr(dest, addr, av1, av2) => bscode::Instruction::new(dest+10000, ArithRaw::combine(6, EAddress(addr)), ArithRaw::combine(5, av1), ArithRaw::combine(2, av2)),
+            &GetSystemTime(dest, addr, t1) => bscode::Instruction::new(dest+10000, ArithRaw::combine(6, EAddress(addr)), ArithRaw::combine(6, EValue(Zero::zero())), t1),
+            &Date365(dest, av1, av2) => bscode::Instruction::new(dest+10000, ArithRaw::combine(9, av1), ArithRaw::combine(1, av2), ArithTerm::null()),
+            &Date360(dest, av1, av2) => bscode::Instruction::new(dest+10000, ArithRaw::combine(9, av1), ArithRaw::combine(2, av2), ArithTerm::null()),
+            &DateDiff(dest, av1, av2) => bscode::Instruction::new(dest+10000, ArithRaw::combine(9, av1), ArithRaw::combine(3, av2), ArithTerm::null()),
+            &DateFoo(dest, av1, av2) => bscode::Instruction::new(dest+10000, ArithRaw::combine(9, av1), ArithRaw::combine(4, av2), ArithTerm::null()),
             &Table(flag,TableSearch,p,x,y,z) => bscode::Instruction::new(p.as_value()+30000, x.as_value(), y, z*10+2-flag.as_value()),
             &Table(flag,TableSearchRange,p,x,y,z) => bscode::Instruction::new(p.as_value()+30000, x.as_value(), y, z*10+4-flag.as_value()),
             &Table(flag,TableSearchRangePairs,p,x,y,z) => bscode::Instruction::new(p.as_value()+30000, x.as_value(), y, z*10+6-flag.as_value()),
             &Table(flag,TableTransfer,p,x,y,z) => bscode::Instruction::new(p.as_value()+30000, x.as_value(), y, z*10+8-flag.as_value()),
             &Table(flag,TableTransferReverse,p,x,y,z) => bscode::Instruction::new(p.as_value()+30000, x.as_value(), y, z*10+10-flag.as_value()),
             &Unrecognised(a,b,c,d) => bscode::Instruction::new(a,b,c,d),
-            x => conditional_as_bscode(x).unwrap(),
+            x => match conditional_as_bscode(x) {
+                Some(inst) => inst,
+                None => {
+                    bscode::Instruction::new(0,0,0,0)
+                }
+            },
         }
     }
 
@@ -999,8 +1113,9 @@ impl Instruction {
                 let t2 = args.get(2).as_arithterm();
                 let t3 = args.get(3).as_arithterm();
                 match (addr, av1, t1, t2, t3) {
-                    (Some(addr), Some(EAddress(a1)), None, Some(t2), Some(t3)) => Ok(Arithmetic(addr, ArithCell(Add, a1), t2, t3)),
-                    (Some(addr), Some(EValue(v1)), None, Some(t2), Some(t3)) => Ok(Arithmetic(addr, ArithImmediate(Add, v1), t2, t3)),
+                    (Some(addr), Some(av1), None, Some(t2), Some(t3)) => Ok(ArithmeticSet(addr, av1, t2, t3)),
+                    (Some(addr), None, Some(ArithCell(Subtract, a1)), Some(t2), Some(t3)) => Ok(ArithmeticSetNeg(addr, EAddress(a1), t2, t3)),
+                    (Some(addr), None, Some(ArithImmediate(Subtract, v1)), Some(t2), Some(t3)) => Ok(ArithmeticSetNeg(addr, EValue(v1), t2, t3)),
                     (Some(addr), None, Some(t1), Some(t2), Some(t3)) => Ok(Arithmetic(addr, t1, t2, t3)),
                     _ => Err("expected SET <cell>, {<cell>|<int>|<arithterm>}[, <arithterm>[, <arithterm>]]")
                 }
@@ -1055,6 +1170,60 @@ impl Instruction {
                 match args.get(0).as_maybe_value() {
                     Some(m) => Ok(SetVideo(m)),
                     _ => Err("expected VIDEO <int>")
+                }
+            },
+            "SUBSTR" => {
+                let dest = args.get(0).as_address();
+                let addr = args.get(1).as_address();
+                let av2 = args.get(2).as_address_or_value();
+                let av3 = args.get(3).as_address_or_value();
+                match (dest, addr, av2, av3) {
+                    (Some(dest), Some(addr), Some(av2), Some(av3)) => Ok(ArithmeticSubstr(dest, addr, av2, av3)),
+                    _ => Err("expected SUBSTR")
+                }
+            },
+            "LEN" => {
+                let dest = args.get(0).as_address();
+                let av1 = args.get(1).as_address_or_value();
+                let t2 = args.get(2).as_arithterm();
+                let t3 = args.get(3).as_arithterm();
+                match (dest, av1, t2, t3) {
+                    (Some(dest), Some(av1), Some(t2), Some(t3)) => Ok(ArithmeticLen(dest, av1, t2, t3)),
+                    _ => Err("expected LEN <dest>, {<cell>|<int>}[, <arithterm>[, <arithterm>]]")
+                }
+            },
+            "CLEAR" => {
+                let dest = args.get(0).as_address();
+                let a = args.get(1).as_address();
+                let t2 = args.get(2).as_arithterm();
+                let t3 = args.get(3).as_arithterm();
+                match (dest, a, t2, t3) {
+                    (Some(dest), Some(a), Some(t2), Some(t3)) => Ok(Clear(dest, a, t2, t3)),
+                    _ => Err("expected CLEAR <dest>, <cell>[, <arithterm>[, <arithterm>]]")
+                }
+            },
+            "TIME" => {
+                let dest = args.get(0).as_address();
+                let a = args.get(1).as_address();
+                let t2 = args.get(2).as_arithterm();
+                match (dest, a, t2) {
+                    (Some(dest), Some(a), Some(t2)) => Ok(GetSystemTime(dest, a, t2)),
+                    _ => Err("expected TIME <dest>, <cell>[, <arithterm>]")
+                }
+            },
+            "DATE360"|"DATE365"|"DATEDIFF"|"DATEFOO" => {
+                let dest = args.get(0).as_address();
+                let a1 = args.get(1).as_address_or_value();
+                let a2 = args.get(2).as_address_or_value();
+                match (dest, a1, a2) {
+                    (Some(dest), Some(a1), Some(a2)) => match name.as_slice() {
+                        "DATE365"  => Ok(Date365(dest, a1, a2)),
+                        "DATE360"  => Ok(Date360(dest, a1, a2)),
+                        "DATEDIFF" => Ok(DateDiff(dest, a1, a2)),
+                        "DATEFOO"  => Ok(DateFoo(dest, a1, a2)),
+                        _ => Err("unexpected DATE* command")
+                    },
+                    _ => Err("expected DATE* <dest>, <a>, <b>")
                 }
             },
             _ => {
@@ -1235,6 +1404,27 @@ impl TreeNode for Instruction {
 }
 
 #[allow(unused_must_use)]
+fn render_common_arith<T: Show>(name: &'static str, addr: CellAddress, arg: T, term1: ArithTerm, term2: ArithTerm, formatter: &mut Formatter) -> Result<(), FormatError> {
+    name.fmt(formatter);
+    formatter.write_char(' ');
+    addr.fmt(formatter);
+    ", ".fmt(formatter);
+    let mut result = arg.fmt(formatter);
+    if term1.is_null() && term2.is_null() {
+        return result;
+    }
+    result = ", ".fmt(formatter);
+    if ! term1.is_null() {
+        result = term1.fmt(formatter);
+    }
+    if ! term2.is_null() {
+        ", ".fmt(formatter);
+        result = term2.fmt(formatter);
+    }
+    return result;
+}
+
+#[allow(unused_must_use)]
 fn render_arith_terms(t1: ArithTerm, t2: ArithTerm, t3: ArithTerm, formatter: &mut Formatter) -> Result<(), FormatError> {
     let p2 = t2.effective();
     let p3 = t3.effective();
@@ -1342,17 +1532,17 @@ impl Show for Instruction {
                 formatter.write_char(' ');
                 addr.fmt(formatter)
             },
-            &Clear(addr) => {
-                "CLEAR".fmt(formatter);
-                formatter.write_char(' ');
-                addr.fmt(formatter)
+            &Clear(addr, srcaddr, t1, t2) => {
+                render_common_arith("CLEAR", addr, srcaddr, t1, t2, formatter)
             },
-            &ArithmeticLen(addr, arg) => {
-                "LEN".fmt(formatter);
-                formatter.write_char(' ');
-                addr.fmt(formatter);
-                ", ".fmt(formatter);
-                arg.fmt(formatter)
+            &ArithmeticLen(addr, arg, term1, term2) => {
+                render_common_arith("LEN", addr, arg, term1, term2, formatter)
+            },
+            &ArithmeticSet(addr, arg, term1, term2) => {
+                render_common_arith("SET", addr, arg, term1, term2, formatter)
+            },
+            &ArithmeticSetNeg(addr, arg, term1, term2) => {
+                render_common_arith("SET", addr, ArithTerm::new(Subtract, arg), term1, term2, formatter)
             },
             &ArithmeticPow(addr, arg1, arg2, term) => {
                 "POW".fmt(formatter);
@@ -1379,10 +1569,12 @@ impl Show for Instruction {
                 ", ".fmt(formatter);
                 arg3.fmt(formatter)
             },
-            &GetSystemTime(addr, term) => {
+            &GetSystemTime(addr, arg1, term) => {
                 "TIME".fmt(formatter);
                 formatter.write_char(' ');
-                let mut result = addr.fmt(formatter);
+                addr.fmt(formatter);
+                ", ".fmt(formatter);
+                let mut result = arg1.fmt(formatter);
                 if term != ArithEmpty {
                     ", ".fmt(formatter);
                     result = term.fmt(formatter);
@@ -1390,42 +1582,10 @@ impl Show for Instruction {
                 return result;
             },
             &ArithmeticLog(addr, arg, term1, term2) => {
-                "LOG".fmt(formatter);
-                formatter.write_char(' ');
-                addr.fmt(formatter);
-                ", ".fmt(formatter);
-                let mut result = arg.fmt(formatter);
-                if term1 == ArithEmpty && term2 == ArithEmpty {
-                    return result;
-                }
-                result = ", ".fmt(formatter);
-                if term1 != ArithEmpty {
-                    result = term1.fmt(formatter);
-                }
-                if term2 != ArithEmpty {
-                    ", ".fmt(formatter);
-                    result = term2.fmt(formatter);
-                }
-                return result;
+                render_common_arith("LOG", addr, arg, term1, term2, formatter)
             },
             &ArithmeticTrunc(addr, arg, term1, term2) => {
-                "TRUNC".fmt(formatter);
-                formatter.write_char(' ');
-                addr.fmt(formatter);
-                ", ".fmt(formatter);
-                let mut result = arg.fmt(formatter);
-                if term1 == ArithEmpty && term2 == ArithEmpty {
-                    return result;
-                }
-                result = ", ".fmt(formatter);
-                if term1 != ArithEmpty {
-                    result = term1.fmt(formatter);
-                }
-                if term2 != ArithEmpty {
-                    ", ".fmt(formatter);
-                    result = term2.fmt(formatter);
-                }
-                return result;
+                render_common_arith("TRUNC", addr, arg, term1, term2, formatter)
             },
             &Date365(addr, arg1, arg2) => {
                 "DATE365".fmt(formatter);
@@ -1712,10 +1872,10 @@ fn render_arith() {
 
 #[test]
 fn disassemble_line() {
-    let strform = "10350,22422,2693,22537";
+    let strform = "10350,22422,2693,22531";
     let bstree = Tree::<bscode::Instruction>::parse_string(strform).unwrap();
     assert_eq!(bstree.len(), 1);
     let inst = Instruction::from_bscode(bstree.get(0));
     let disassembled = inst.to_str();
-    assert_eq!("SET @350, ADD(42), MUL(@269), LOG(53)", disassembled.as_slice());
+    assert_eq!("SET @350, 42, MUL(@269), SUB(53)", disassembled.as_slice());
 }
