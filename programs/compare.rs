@@ -73,7 +73,7 @@ fn compare(tree1: Tree<bscode::Instruction>, tree2: Tree<bscode::Instruction>, r
         let inst1 = tree1.get(i);
         let inst2 = tree2.get(i);
         if inst1 != inst2 {
-            reporter.report(i, "mismatch", inst1, inst2);
+            reporter.report(i+1, "mismatch", inst1, inst2);
         }
     }
 

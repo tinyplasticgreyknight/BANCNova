@@ -1552,17 +1552,13 @@ impl Show for Instruction {
                     return status;
                 }
                 formatter.write_str(", ");
-                if ! p1z {
-                    status = p1.fmt(formatter);
-                }
-                if r.is_zero() && p2.is_zero() {
+                status = p1.fmt(formatter);
+                if rz && p2z {
                     return status;
                 }
                 formatter.write_str(", ");
-                if !rz {
-                    status = r.fmt(formatter);
-                }
-                if !p2z {
+                status = r.fmt(formatter);
+                if ! p2z {
                     formatter.write_str(", ");
                     status = p2.fmt(formatter);
                 }
