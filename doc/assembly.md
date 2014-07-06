@@ -543,7 +543,8 @@ If you find a BANCStar instruction which disassembles to this form, but you expe
 
 
 ## Bugs/Missing features
-* The `SET` command is currently based on a slightly misunderstanding of the BANCStar arithmetic instruction.  This will be corrected shortly.
+* missing syntax for enabling/disabling F-keys
+* missing syntax for "combination GOTOs" (not understood)
 * The conditional operators used in `COND` etc turn out to depend in various ways on the *type* of the prompt cell.  This is currently not represented, and we always show the numeric-style operator: can be misleading if you're working on a string!
 * missing syntax for describing prompt cells themselves.
 * missing syntax for describing "forms" (we don't understand them yet).
