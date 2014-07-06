@@ -188,6 +188,32 @@ Sets `*<dest>*` to the value of `*<x>*` raised to the power of `*<y>*`.
 
 Optionally, an extra operation can be done afterwards, by specifying a trailing `*<arithterm>*`.
 
+### `INVPOW`
+
+Exponentiation to negative powers.
+
+ `INVPOW *<dest>*, *<x>*, *<y>*`
+ `INVPOW *<dest>*, *<x>*, *<y>*, *<arithterm>*`
+
+Sets `*<dest>*` to the value of `*<x>*` raised to the power of negative-`*<y>*`.
+
+Note that the resulting BANCStar code is speculative; it's not known if the results will be accurate.
+
+Optionally, an extra operation can be done afterwards, by specifying a trailing `*<arithterm>*`.
+
+### `ROOT`
+
+Find the nth root of a value.
+
+ `ROOT *<dest>*, *<x>*, *<y>*`
+ `ROOT *<dest>*, *<x>*, *<y>*, *<arithterm>*`
+
+Sets `*<dest>*` to the value of the `*<y>*`-th root of `*<x>*`.
+
+Note that the resulting BANCStar code is speculative; it's not known if the results will be accurate.
+
+Optionally, an extra operation can be done afterwards, by specifying a trailing `*<arithterm>*`.
+
 ### `SUBSTR`
 
 Extract substring
