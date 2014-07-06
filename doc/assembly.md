@@ -174,8 +174,12 @@ Probably equivalent in function to `SUBSTR *<dest>*, *<prompt>*, 0, 0`, but asse
 Get length.
 
  `LEN *<dest>*, *<value/prompt>*`
+ `LEN *<dest>*, *<value/prompt>*, *<arithterm>*`
+ `LEN *<dest>*, *<value/prompt>*, *<arithterm>*, *<arithterm>*`
 
 `*<value/prompt>*` can be either a cell (in which case take the length of its contents, presumably a string), or a literal number (in which case it's not clear what is being measured).
+
+Optionally, up to two extra operations can be done afterwards, by specifying trailing `*<arithterm>*`s.
 
 ### `POW`
 
