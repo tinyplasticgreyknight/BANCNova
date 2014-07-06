@@ -218,11 +218,11 @@ Optionally, an extra operation can be done afterwards, by specifying a trailing 
 
 Extract substring
 
- `SUBSTR *<dest>*, *<str>*, *<a>*, *<b>*`
+ `SUBSTR *<dest>*, *<str>*, *<start>*, *<length>*`
 
-Sets `*<dest>*` to the substring of `*<str>*` from `*<a>*`.  `*<b>*` specifies either a length or an ending index.
+Sets `*<dest>*` to the substring of `*<str>*` from `*<start>*`; the resulting string has `*<length>*` characters.
 
-It's not known whether strings are indexed from 0 or from 1, and it's not known if the ending index is inclusive or not.
+It's not known whether strings are indexed from 0 or from 1, and it's not known what happens if the substring exceeds the bounds of the input string.
 
 ### `TIME`
 
